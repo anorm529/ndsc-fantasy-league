@@ -22,145 +22,126 @@ export default async function PlayersPage({
   params: Promise<{ leagueId: string }>;
   searchParams: Promise<{ search?: string; gender?: string; team?: string; replacing?: string }>;
 }) {
-  const { leagueId } = await params;
-  const { search, gender, team, replacing } = await searchParams;
+  const [{ leagueId }, { search, gender, team, replacing }] = await Promise.all([params, searchParams]);
 
-  const session = await requireSession();
   const pool = getMainDb();
 
-  const league = await db.fantasyLeague.findUnique({ where: { id: leagueId } });
+  // Wave 1 — session + league in parallel (both needed before anything else)
+  const [session, league] = await Promise.all([
+    requireSession(),
+    db.fantasyLeague.findUnique({ where: { id: leagueId } }),
+  ]);
   if (!league) notFound();
 
   const windowClosed = !league.transferWindowOpen ||
     (league.windowClosesAt != null && new Date() >= league.windowClosesAt);
   const squadSize = league.squadSize ?? 7;
-
   const seasonId = league.mainSeasonId;
 
-  const playerRes = await pool.query<PlayerRow>(
-    `SELECT DISTINCT ON (p.id)
-       p.id, p.display_name, p.gender,
-       pts.squad_status,
-       t.name as team_name
-     FROM player_season_stats pss
-     JOIN players p ON p.id = pss.player_id
-     LEFT JOIN player_team_seasons pts
-       ON pts.player_id = p.id AND pts.season_id = pss.season_id
-     LEFT JOIN teams t ON t.id = pts.team_id
-     WHERE pss.season_id = $1
-       AND p.active = true
-     ORDER BY p.id`,
-    [seasonId]
-  );
+  // Wave 2 — player list, team list, user record, total team count (all independent)
+  const [playerRes, teamsRes, fantasyUser, totalTeams] = await Promise.all([
+    pool.query<PlayerRow>(
+      `SELECT DISTINCT ON (p.id)
+         p.id, p.display_name, p.gender,
+         pts.squad_status,
+         t.name as team_name
+       FROM player_season_stats pss
+       JOIN players p ON p.id = pss.player_id
+       LEFT JOIN player_team_seasons pts
+         ON pts.player_id = p.id AND pts.season_id = pss.season_id
+       LEFT JOIN teams t ON t.id = pts.team_id
+       WHERE pss.season_id = $1
+         AND p.active = true
+       ORDER BY p.id`,
+      [seasonId]
+    ),
+    pool.query<{ name: string }>(
+      `SELECT DISTINCT t.name
+       FROM player_team_seasons pts
+       JOIN teams t ON t.id = pts.team_id
+       WHERE pts.season_id = $1
+       ORDER BY t.name`,
+      [seasonId]
+    ),
+    db.fantasyUser.upsert({
+      where: { memberUserId: session.memberUserId },
+      create: { memberUserId: session.memberUserId, teamName: "My Fantasy Team" },
+      update: {},
+    }),
+    db.fantasyTeam.count({ where: { leagueId } }),
+  ]);
 
+  // Apply filters in-memory (no extra DB round-trip)
   let players = playerRes.rows;
-
   if (search) {
     const q = search.toLowerCase();
     players = players.filter((p) => p.display_name.toLowerCase().includes(q));
   }
-  if (gender) {
-    players = players.filter((p) => p.gender?.toLowerCase() === gender.toLowerCase());
-  }
-  if (team) {
-    players = players.filter((p) => p.team_name === team);
-  }
-
-  const teamsRes = await pool.query<{ name: string }>(
-    `SELECT DISTINCT t.name
-     FROM player_team_seasons pts
-     JOIN teams t ON t.id = pts.team_id
-     WHERE pts.season_id = $1
-     ORDER BY t.name`,
-    [seasonId]
-  );
-  const allTeams = teamsRes.rows.map((t) => t.name);
+  if (gender) players = players.filter((p) => p.gender?.toLowerCase() === gender.toLowerCase());
+  if (team) players = players.filter((p) => p.team_name === team);
 
   const playerIds = players.map((p) => p.id);
-  const metaMap = new Map<string, { currentPrice: number; fantasyRating: number; status: string }>();
+  const allTeams = teamsRes.rows.map((t) => t.name);
 
-  if (playerIds.length > 0) {
-    const metas = await db.fantasyPlayerMeta.findMany({
-      where: { leagueId, playerId: { in: playerIds } },
-    });
-    for (const m of metas) {
-      metaMap.set(m.playerId, {
-        currentPrice: Number(m.currentPrice),
-        fantasyRating: m.fantasyRating,
-        status: m.status,
-      });
-    }
-  }
-
-  let fantasyUser = await db.fantasyUser.findUnique({
-    where: { memberUserId: session.memberUserId },
-  });
-  if (!fantasyUser) {
-    fantasyUser = await db.fantasyUser.create({
-      data: { memberUserId: session.memberUserId, teamName: "My Fantasy Team" },
-    });
-  }
-
-  let fantasyTeam = await db.fantasyTeam.findUnique({
-    where: { fantasyUserId_leagueId: { fantasyUserId: fantasyUser.id, leagueId } },
-    include: { roster: true },
-  });
-  if (!fantasyTeam) {
-    fantasyTeam = await db.fantasyTeam.create({
-      data: { fantasyUserId: fantasyUser.id, leagueId, currentBudget: Number(league.startingBudget) },
+  // Wave 3 — player metas, ownership, and team record in parallel
+  const [metas, ownershipCounts, fantasyTeam] = await Promise.all([
+    playerIds.length > 0
+      ? db.fantasyPlayerMeta.findMany({ where: { leagueId, playerId: { in: playerIds } } })
+      : Promise.resolve([]),
+    playerIds.length > 0
+      ? db.fantasyRoster.groupBy({
+          by: ["playerId"],
+          _count: { playerId: true },
+          where: { playerId: { in: playerIds }, team: { leagueId } },
+        })
+      : Promise.resolve([]),
+    db.fantasyTeam.upsert({
+      where: { fantasyUserId_leagueId: { fantasyUserId: fantasyUser.id, leagueId } },
+      create: { fantasyUserId: fantasyUser.id, leagueId, currentBudget: Number(league.startingBudget) },
+      update: {},
       include: { roster: true },
-    });
-  }
+    }),
+  ]);
 
-  const rosterIds = new Set(fantasyTeam?.roster.map((r) => r.playerId) ?? []);
-  const budget = Number(fantasyTeam?.currentBudget ?? 50.0);
-  const squadFull = (fantasyTeam?.roster.length ?? 0) >= squadSize;
-
-  // Weekly transfer count (for extra transfer warning)
-  let thisWeekTransfers = 0;
-  if (fantasyTeam) {
-    const weekStart = getWeekStart();
-    thisWeekTransfers = await db.fantasyTransfer.count({
-      where: { fantasyTeamId: fantasyTeam.id, transferDate: { gte: weekStart } },
-    });
-  }
-
-  // Transfer mode — look up the roster entry being replaced
-  let rosterOutEntry: { id: string; playerId: string; currentPrice: number } | null = null;
-  let rosterOutPlayerName: string | null = null;
-  let effectiveBudget = budget;
-
-  if (replacing && fantasyTeam) {
-    const entry = fantasyTeam.roster.find((r) => r.id === replacing);
-    if (entry) {
-      rosterOutEntry = { id: entry.id, playerId: entry.playerId, currentPrice: Number(entry.currentPrice) };
-      effectiveBudget = budget + rosterOutEntry.currentPrice;
-
-      if (rosterOutEntry.playerId) {
-        const pRes = await pool.query<{ display_name: string }>(
-          "SELECT display_name FROM players WHERE id = $1",
-          [rosterOutEntry.playerId]
-        );
-        rosterOutPlayerName = pRes.rows[0]?.display_name ?? "player";
-      }
-    }
-  }
-
-  const totalTeams = await db.fantasyTeam.count({ where: { leagueId } });
-  const ownershipCounts = await db.fantasyRoster.groupBy({
-    by: ["playerId"],
-    _count: { playerId: true },
-    where: {
-      playerId: { in: playerIds },
-      team: { leagueId },
-    },
-  });
+  const metaMap = new Map(
+    metas.map((m) => [m.playerId, {
+      currentPrice: Number(m.currentPrice),
+      fantasyRating: m.fantasyRating,
+      status: m.status,
+    }])
+  );
   const ownershipMap = new Map(
     ownershipCounts.map((o) => [
       o.playerId,
       totalTeams > 0 ? Math.round((o._count.playerId / totalTeams) * 100) : 0,
     ])
   );
+
+  const rosterIds = new Set(fantasyTeam.roster.map((r) => r.playerId));
+  const budget = Number(fantasyTeam.currentBudget);
+  const squadFull = fantasyTeam.roster.length >= squadSize;
+
+  // Resolve transfer mode entry (in-memory, no extra query)
+  const rosterOutRoster = replacing ? fantasyTeam.roster.find((r) => r.id === replacing) : null;
+  const rosterOutEntry = rosterOutRoster
+    ? { id: rosterOutRoster.id, playerId: rosterOutRoster.playerId, currentPrice: Number(rosterOutRoster.currentPrice) }
+    : null;
+  const effectiveBudget = budget + (rosterOutEntry?.currentPrice ?? 0);
+
+  // Wave 4 — weekly transfer count + replacing player name in parallel
+  const weekStart = getWeekStart();
+  const [thisWeekTransfers, rosterOutNameRes] = await Promise.all([
+    db.fantasyTransfer.count({
+      where: { fantasyTeamId: fantasyTeam.id, transferDate: { gte: weekStart } },
+    }),
+    rosterOutEntry?.playerId
+      ? pool.query<{ display_name: string }>(
+          "SELECT display_name FROM players WHERE id = $1",
+          [rosterOutEntry.playerId]
+        )
+      : Promise.resolve(null),
+  ]);
+  const rosterOutPlayerName = rosterOutNameRes?.rows[0]?.display_name ?? (rosterOutEntry ? "player" : null);
 
   const isTransferMode = !!rosterOutEntry;
 
@@ -248,30 +229,28 @@ export default async function PlayersPage({
         )}
       </form>
 
-      {fantasyTeam && (
-        <div className="bg-ndsc-navy/5 border border-ndsc-navy/20 rounded-lg px-4 py-3 text-sm flex flex-wrap gap-x-6 gap-y-1">
-          <span>
-            <strong className="text-ndsc-navy">Budget:</strong>{" "}
-            {isTransferMode ? (
-              <>£{effectiveBudget.toFixed(1)}M effective</>
-            ) : (
-              <>£{budget.toFixed(1)}M remaining</>
-            )}
-          </span>
-          <span>
-            <strong className="text-ndsc-navy">Squad:</strong> {fantasyTeam.roster.length}/{squadSize} players
-          </span>
-          <span>
-            <strong className="text-ndsc-navy">Free transfers:</strong>{" "}
-            {thisWeekTransfers === 0
-              ? "1 remaining this week"
-              : <span className="text-red-600">{thisWeekTransfers} used — extras cost −15 pts</span>}
-          </span>
-          {squadFull && !isTransferMode && (
-            <span className="text-amber-600 font-medium">Squad full — use Transfer to swap</span>
+      <div className="bg-ndsc-navy/5 border border-ndsc-navy/20 rounded-lg px-4 py-3 text-sm flex flex-wrap gap-x-6 gap-y-1">
+        <span>
+          <strong className="text-ndsc-navy">Budget:</strong>{" "}
+          {isTransferMode ? (
+            <>£{effectiveBudget.toFixed(1)}M effective</>
+          ) : (
+            <>£{budget.toFixed(1)}M remaining</>
           )}
-        </div>
-      )}
+        </span>
+        <span>
+          <strong className="text-ndsc-navy">Squad:</strong> {fantasyTeam.roster.length}/{squadSize} players
+        </span>
+        <span>
+          <strong className="text-ndsc-navy">Free transfers:</strong>{" "}
+          {thisWeekTransfers === 0
+            ? "1 remaining this week"
+            : <span className="text-red-600">{thisWeekTransfers} used — extras cost −15 pts</span>}
+        </span>
+        {squadFull && !isTransferMode && (
+          <span className="text-amber-600 font-medium">Squad full — use Transfer to swap</span>
+        )}
+      </div>
 
       {/* Badge legend */}
       <div className="flex flex-wrap gap-3 text-xs text-slate-500">
@@ -380,14 +359,13 @@ export default async function PlayersPage({
                           playerId={p.id}
                           playerName={p.display_name}
                           price={meta.currentPrice}
-                          disabled={windowClosed || !canAfford || !fantasyTeam}
+                          disabled={windowClosed || !canAfford}
                           disabledReason={
                             windowClosed ? "Transfer window closed"
-                            : !fantasyTeam ? "Create team first"
                             : !canAfford ? "Insufficient budget"
                             : undefined
                           }
-                          teamId={fantasyTeam?.id}
+                          teamId={fantasyTeam.id}
                           leagueId={leagueId}
                           replacingRosterId={rosterOutEntry!.id}
                           replacingPlayerName={rosterOutPlayerName ?? undefined}
@@ -398,15 +376,14 @@ export default async function PlayersPage({
                           playerId={p.id}
                           playerName={p.display_name}
                           price={meta.currentPrice}
-                          disabled={windowClosed || squadFull || !canAfford || !fantasyTeam}
+                          disabled={windowClosed || squadFull || !canAfford}
                           disabledReason={
                             windowClosed ? "Transfer window closed"
-                            : !fantasyTeam ? "Create team first"
                             : squadFull ? "Squad full — use Transfer from My Team"
                             : !canAfford ? "Insufficient budget"
                             : undefined
                           }
-                          teamId={fantasyTeam?.id}
+                          teamId={fantasyTeam.id}
                           leagueId={leagueId}
                         />
                       )}

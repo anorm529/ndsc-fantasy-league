@@ -12,80 +12,83 @@ export default async function DashboardPage({
   params: Promise<{ leagueId: string }>;
 }) {
   const { leagueId } = await params;
-  const session = await requireSession();
-
-  const league = await db.fantasyLeague.findUnique({ where: { id: leagueId } });
-  if (!league) notFound();
-
-  const fantasyUser = await db.fantasyUser.findUnique({
-    where: { memberUserId: session.memberUserId },
-  });
-
-  const fantasyTeam = fantasyUser
-    ? await db.fantasyTeam.findUnique({
-        where: { fantasyUserId_leagueId: { fantasyUserId: fantasyUser.id, leagueId } },
-        include: { roster: true },
-      })
-    : null;
-
   const pool = getMainDb();
 
-  // Processed game IDs for this league
-  const processedGames = await db.fantasyProcessedGame.findMany({
-    where: { leagueId },
-    select: { id: true },
-    orderBy: { processedAt: "desc" },
-  });
+  // Wave 1 — session + league in parallel
+  const [session, league] = await Promise.all([
+    requireSession(),
+    db.fantasyLeague.findUnique({ where: { id: leagueId } }),
+  ]);
+  if (!league) notFound();
+
+  // Wave 2 — user record + processed games in parallel (both only need leagueId/memberUserId)
+  const [fantasyUser, processedGames] = await Promise.all([
+    db.fantasyUser.findUnique({ where: { memberUserId: session.memberUserId } }),
+    db.fantasyProcessedGame.findMany({
+      where: { leagueId },
+      select: { id: true },
+      orderBy: { processedAt: "desc" },
+    }),
+  ]);
+
   const processedGameIds = processedGames.map((g) => g.id);
 
-  // Top scorers across all pushed games in this league
-  const topScorers = processedGameIds.length > 0
-    ? await db.fantasyScore.groupBy({
-        by: ["playerId"],
-        where: { processedGameId: { in: processedGameIds } },
-        _sum: { fantasyPoints: true },
-        orderBy: { _sum: { fantasyPoints: "desc" } },
-        take: 5,
-      })
-    : [];
+  // Wave 3 — team record, top scorers, price changes all in parallel
+  const [fantasyTeam, topScorers, priceChanges] = await Promise.all([
+    fantasyUser
+      ? db.fantasyTeam.findUnique({
+          where: { fantasyUserId_leagueId: { fantasyUserId: fantasyUser.id, leagueId } },
+          include: { roster: true },
+        })
+      : Promise.resolve(null),
+    processedGameIds.length > 0
+      ? db.fantasyScore.groupBy({
+          by: ["playerId"],
+          where: { processedGameId: { in: processedGameIds } },
+          _sum: { fantasyPoints: true },
+          orderBy: { _sum: { fantasyPoints: "desc" } },
+          take: 5,
+        })
+      : Promise.resolve([]),
+    processedGameIds.length > 0
+      ? db.fantasyPriceHistory.findMany({
+          where: { processedGameId: { in: processedGameIds } },
+          orderBy: { processedGame: { processedAt: "desc" } },
+          take: 5,
+        })
+      : Promise.resolve([]),
+  ]);
 
+  // Wave 4 — player name lookups + transfer count in parallel
   const topScorerIds = topScorers.map((s) => s.playerId);
-  let topPlayers: { id: string; display_name: string }[] = [];
-  if (topScorerIds.length > 0) {
-    const pRes = await pool.query<{ id: string; display_name: string }>(
-      "SELECT id, display_name FROM players WHERE id = ANY($1::uuid[])",
-      [topScorerIds]
-    );
-    topPlayers = pRes.rows;
-  }
+  const priceChangePlayerIds = [...new Set(priceChanges.map((p) => p.playerId))];
+
+  const [topPlayersRes, priceChangePlayersRes, transfersUsed] = await Promise.all([
+    topScorerIds.length > 0
+      ? pool.query<{ id: string; display_name: string }>(
+          "SELECT id, display_name FROM players WHERE id = ANY($1::uuid[])",
+          [topScorerIds]
+        )
+      : Promise.resolve({ rows: [] as { id: string; display_name: string }[] }),
+    priceChangePlayerIds.length > 0
+      ? pool.query<{ id: string; display_name: string }>(
+          "SELECT id, display_name FROM players WHERE id = ANY($1::uuid[])",
+          [priceChangePlayerIds]
+        )
+      : Promise.resolve({ rows: [] as { id: string; display_name: string }[] }),
+    fantasyTeam
+      ? db.fantasyTransfer.count({ where: { fantasyTeamId: fantasyTeam.id } })
+      : Promise.resolve(0),
+  ]);
+
+  const topPlayers = topPlayersRes.rows;
+  const priceChangePlayers = priceChangePlayersRes.rows;
 
   const topPlayersWithPoints = topScorers.map((s) => ({
     name: topPlayers.find((p) => p.id === s.playerId)?.display_name ?? "Unknown",
     points: s._sum.fantasyPoints ?? 0,
   }));
 
-  // Latest price changes for this league
-  const priceChanges = processedGameIds.length > 0
-    ? await db.fantasyPriceHistory.findMany({
-        where: { processedGameId: { in: processedGameIds } },
-        orderBy: { processedGame: { processedAt: "desc" } },
-        take: 5,
-      })
-    : [];
-
-  const priceChangePlayerIds = [...new Set(priceChanges.map((p) => p.playerId))];
-  let priceChangePlayers: { id: string; display_name: string }[] = [];
-  if (priceChangePlayerIds.length > 0) {
-    const pcRes = await pool.query<{ id: string; display_name: string }>(
-      "SELECT id, display_name FROM players WHERE id = ANY($1::uuid[])",
-      [priceChangePlayerIds]
-    );
-    priceChangePlayers = pcRes.rows;
-  }
-
-  const transfersUsed = fantasyTeam
-    ? await db.fantasyTransfer.count({ where: { fantasyTeamId: fantasyTeam.id } })
-    : 0;
   const freeTransfersLeft = Math.max(0, 1 - (transfersUsed % 1));
 
   const base = `/league/${leagueId}`;
