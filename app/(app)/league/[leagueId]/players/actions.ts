@@ -1,6 +1,6 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, updateTag } from "next/cache";
 import { db } from "@/app/lib/fantasy-db";
 import { requireSession } from "@/app/lib/auth";
 import { getMainDb } from "@/app/lib/main-db";
@@ -61,6 +61,8 @@ export async function signPlayerAction(
     }),
   ]);
 
+  updateTag("ownership");
+  updateTag("league-team-count");
   revalidatePath(`/league/${leagueId}/players`);
   revalidatePath(`/league/${leagueId}/my-team`);
 
@@ -147,6 +149,7 @@ export async function transferPlayerAction(
     }),
   ]);
 
+  updateTag("ownership");
   revalidatePath(`/league/${leagueId}/players`);
   revalidatePath(`/league/${leagueId}/my-team`);
 

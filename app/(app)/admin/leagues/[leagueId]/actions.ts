@@ -1,6 +1,6 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, updateTag } from "next/cache";
 import { db } from "@/app/lib/fantasy-db";
 import { requireSession } from "@/app/lib/auth";
 import { getMainDb } from "@/app/lib/main-db";
@@ -104,6 +104,8 @@ export async function generatePricesAction(
 
     await applyPrices(results, session.memberUserId, leagueId);
 
+    updateTag("player-metas");
+    updateTag("player-list");
     revalidatePath(`/admin/leagues/${leagueId}`);
     revalidatePath(`/league/${leagueId}/players`);
 
@@ -129,6 +131,7 @@ export async function pushGameAction(
     `${result.scoreCount} scores, ${result.priceChanges} price changes`
   );
 
+  updateTag("player-metas");
   revalidatePath(`/admin/leagues/${leagueId}`);
   revalidatePath(`/league/${leagueId}/dashboard`);
   revalidatePath(`/league/${leagueId}/standings`);
@@ -154,6 +157,7 @@ export async function setPlayerPriceAction(leagueId: string, formData: FormData)
   });
 
   await auditLog(session.memberUserId, leagueId, "set_player_price", "player", playerId, `Price: £${price}M, Rating: ${rating}`);
+  updateTag("player-metas");
   revalidatePath(`/admin/leagues/${leagueId}`);
   revalidatePath(`/league/${leagueId}/players`);
 }
@@ -174,6 +178,7 @@ export async function setPlayerStatusAction(leagueId: string, formData: FormData
   });
 
   await auditLog(session.memberUserId, leagueId, "set_player_status", "player", playerId, `Status: ${status}`);
+  updateTag("player-metas");
   revalidatePath(`/admin/leagues/${leagueId}`);
   revalidatePath(`/league/${leagueId}/players`);
 }

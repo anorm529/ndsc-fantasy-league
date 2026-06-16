@@ -1,6 +1,7 @@
 import { scrypt, timingSafeEqual } from "crypto";
 import { promisify } from "util";
 import { cookies } from "next/headers";
+import { cache } from "react";
 import { db } from "./fantasy-db";
 import { getMainDb } from "./main-db";
 
@@ -110,7 +111,8 @@ export type Session = {
   memberUserId: string;
 };
 
-export async function getSession(): Promise<Session | null> {
+// cache() deduplicates within one React render tree (layout + page share the result)
+export const getSession = cache(async (): Promise<Session | null> => {
   const cookieStore = await cookies();
   const token = cookieStore.get(SESSION_COOKIE)?.value;
   if (!token) return null;
@@ -126,7 +128,7 @@ export async function getSession(): Promise<Session | null> {
     fantasyUserId: session.fantasyUserId,
     memberUserId: session.user.memberUserId,
   };
-}
+});
 
 export async function requireSession(): Promise<Session> {
   const session = await getSession();

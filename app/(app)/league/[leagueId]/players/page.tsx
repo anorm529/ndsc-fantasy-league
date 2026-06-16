@@ -4,16 +4,14 @@ import { getMainDb } from "@/app/lib/main-db";
 import { notFound } from "next/navigation";
 import { SignPlayerButton } from "./sign-player-button";
 import { getWeekStart } from "@/app/lib/scoring";
+import {
+  getPlayerListForSeason,
+  getPlayerMetasForLeague,
+  getLeagueTeamCount,
+  getOwnershipForLeague,
+} from "@/app/lib/cached-queries";
 
 export const metadata = { title: "Players — NDSC Fantasy" };
-
-type PlayerRow = {
-  id: string;
-  display_name: string;
-  gender: string | null;
-  squad_status: string | null;
-  team_name: string | null;
-};
 
 export default async function PlayersPage({
   params,
@@ -23,8 +21,6 @@ export default async function PlayersPage({
   searchParams: Promise<{ search?: string; gender?: string; team?: string; replacing?: string }>;
 }) {
   const [{ leagueId }, { search, gender, team, replacing }] = await Promise.all([params, searchParams]);
-
-  const pool = getMainDb();
 
   // Wave 1 — session + league in parallel (both needed before anything else)
   const [session, league] = await Promise.all([
@@ -38,41 +34,21 @@ export default async function PlayersPage({
   const squadSize = league.squadSize ?? 7;
   const seasonId = league.mainSeasonId;
 
-  // Wave 2 — player list, team list, user record, total team count (all independent)
-  const [playerRes, teamsRes, fantasyUser, totalTeams] = await Promise.all([
-    pool.query<PlayerRow>(
-      `SELECT DISTINCT ON (p.id)
-         p.id, p.display_name, p.gender,
-         pts.squad_status,
-         t.name as team_name
-       FROM player_season_stats pss
-       JOIN players p ON p.id = pss.player_id
-       LEFT JOIN player_team_seasons pts
-         ON pts.player_id = p.id AND pts.season_id = pss.season_id
-       LEFT JOIN teams t ON t.id = pts.team_id
-       WHERE pss.season_id = $1
-         AND p.active = true
-       ORDER BY p.id`,
-      [seasonId]
-    ),
-    pool.query<{ name: string }>(
-      `SELECT DISTINCT t.name
-       FROM player_team_seasons pts
-       JOIN teams t ON t.id = pts.team_id
-       WHERE pts.season_id = $1
-       ORDER BY t.name`,
-      [seasonId]
-    ),
+  // Wave 2 — cached shared data + user-specific upsert, all in parallel.
+  // playerData, metas, totalTeams come from the server cache (shared across all users).
+  const [playerData, metas, totalTeams, fantasyUser] = await Promise.all([
+    getPlayerListForSeason(seasonId),
+    getPlayerMetasForLeague(leagueId),
+    getLeagueTeamCount(leagueId),
     db.fantasyUser.upsert({
       where: { memberUserId: session.memberUserId },
       create: { memberUserId: session.memberUserId, teamName: "My Fantasy Team" },
       update: {},
     }),
-    db.fantasyTeam.count({ where: { leagueId } }),
   ]);
 
   // Apply filters in-memory (no extra DB round-trip)
-  let players = playerRes.rows;
+  let players = playerData.players;
   if (search) {
     const q = search.toLowerCase();
     players = players.filter((p) => p.display_name.toLowerCase().includes(q));
@@ -81,20 +57,11 @@ export default async function PlayersPage({
   if (team) players = players.filter((p) => p.team_name === team);
 
   const playerIds = players.map((p) => p.id);
-  const allTeams = teamsRes.rows.map((t) => t.name);
+  const allTeams = playerData.teamNames;
 
-  // Wave 3 — player metas, ownership, and team record in parallel
-  const [metas, ownershipCounts, fantasyTeam] = await Promise.all([
-    playerIds.length > 0
-      ? db.fantasyPlayerMeta.findMany({ where: { leagueId, playerId: { in: playerIds } } })
-      : Promise.resolve([]),
-    playerIds.length > 0
-      ? db.fantasyRoster.groupBy({
-          by: ["playerId"],
-          _count: { playerId: true },
-          where: { playerId: { in: playerIds }, team: { leagueId } },
-        })
-      : Promise.resolve([]),
+  // Wave 3 — ownership (cached) + team record (user-specific) in parallel
+  const [ownershipCounts, fantasyTeam] = await Promise.all([
+    getOwnershipForLeague(leagueId, playerIds),
     db.fantasyTeam.upsert({
       where: { fantasyUserId_leagueId: { fantasyUserId: fantasyUser.id, leagueId } },
       create: { fantasyUserId: fantasyUser.id, leagueId, currentBudget: Number(league.startingBudget) },
@@ -130,6 +97,7 @@ export default async function PlayersPage({
 
   // Wave 4 — weekly transfer count + replacing player name in parallel
   const weekStart = getWeekStart();
+  const pool = getMainDb();
   const [thisWeekTransfers, rosterOutNameRes] = await Promise.all([
     db.fantasyTransfer.count({
       where: { fantasyTeamId: fantasyTeam.id, transferDate: { gte: weekStart } },
