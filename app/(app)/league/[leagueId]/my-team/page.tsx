@@ -2,6 +2,7 @@ import { requireSession } from "@/app/lib/auth";
 import { db } from "@/app/lib/fantasy-db";
 import { getMainDb } from "@/app/lib/main-db";
 import { notFound } from "next/navigation";
+import Link from "next/link";
 import { SetCaptainButton } from "./set-captain-button";
 import { RemovePlayerButton } from "./remove-player-button";
 
@@ -69,6 +70,8 @@ export default async function MyTeamPage({
 
   const budget = Number(team.currentBudget);
   const squadValue = team.roster.reduce((sum, r) => sum + Number(r.currentPrice), 0);
+  const totalPurchased = team.roster.reduce((sum, r) => sum + Number(r.purchasePrice), 0);
+  const totalPnl = squadValue - totalPurchased;
   const captain = team.roster.find((r) => r.isCaptain);
 
   const ruleViolations: string[] = [];
@@ -94,6 +97,11 @@ export default async function MyTeamPage({
           <BudgetStat label="Remaining Budget" value={`£${budget.toFixed(1)}M`} />
           <BudgetStat label="Squad Value" value={`£${squadValue.toFixed(1)}M`} />
           <BudgetStat label="Players" value={`${team.roster.length} / 5`} />
+          <BudgetStat
+            label="Season P&L"
+            value={`${totalPnl >= 0 ? "+" : ""}£${totalPnl.toFixed(1)}M`}
+            valueClass={totalPnl > 0 ? "text-green-600" : totalPnl < 0 ? "text-red-500" : undefined}
+          />
           <BudgetStat
             label="Captain"
             value={captain ? (playerDetails.find((p) => p.id === captain.playerId)?.display_name ?? "—") : "Not set"}
@@ -135,6 +143,10 @@ export default async function MyTeamPage({
           <div className="divide-y divide-slate-100">
             {team.roster.map((r) => {
               const player = playerDetails.find((p) => p.id === r.playerId);
+              const currentPrice = Number(r.currentPrice);
+              const purchasePrice = Number(r.purchasePrice);
+              const pnl = currentPrice - purchasePrice;
+
               return (
                 <div
                   key={r.id}
@@ -158,14 +170,27 @@ export default async function MyTeamPage({
                       </p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <p className="text-sm font-bold text-slate-700">
-                      £{Number(r.currentPrice).toFixed(1)}M
-                    </p>
-                    {!r.isCaptain && (
-                      <SetCaptainButton teamId={team!.id} rosterId={r.id} leagueId={leagueId} />
-                    )}
-                    <RemovePlayerButton teamId={team!.id} rosterId={r.id} leagueId={leagueId} />
+                  <div className="flex items-center gap-4">
+                    <div className="text-right">
+                      <p className="text-sm font-bold text-slate-700">
+                        £{currentPrice.toFixed(1)}M
+                      </p>
+                      <p className={`text-xs font-medium ${pnl > 0 ? "text-green-600" : pnl < 0 ? "text-red-500" : "text-slate-400"}`}>
+                        {pnl > 0 ? "+" : ""}{pnl !== 0 ? `£${pnl.toFixed(1)}M` : "—"}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      {!r.isCaptain && (
+                        <SetCaptainButton teamId={team!.id} rosterId={r.id} leagueId={leagueId} />
+                      )}
+                      <Link
+                        href={`/league/${leagueId}/players?replacing=${r.id}`}
+                        className="text-xs px-2.5 py-1.5 rounded-lg bg-amber-100 text-amber-700 font-medium hover:bg-amber-200 transition-colors"
+                      >
+                        Transfer
+                      </Link>
+                      <RemovePlayerButton teamId={team!.id} rosterId={r.id} leagueId={leagueId} />
+                    </div>
                   </div>
                 </div>
               );
@@ -187,11 +212,19 @@ export default async function MyTeamPage({
   );
 }
 
-function BudgetStat({ label, value }: { label: string; value: string }) {
+function BudgetStat({
+  label,
+  value,
+  valueClass,
+}: {
+  label: string;
+  value: string;
+  valueClass?: string;
+}) {
   return (
     <div>
       <p className="text-xs text-slate-400 font-medium">{label}</p>
-      <p className="text-lg font-bold text-slate-900">{value}</p>
+      <p className={`text-lg font-bold ${valueClass ?? "text-slate-900"}`}>{value}</p>
     </div>
   );
 }

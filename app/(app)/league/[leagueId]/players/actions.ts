@@ -60,3 +60,76 @@ export async function signPlayerAction(
 
   return {};
 }
+
+export async function transferPlayerAction(
+  teamId: string,
+  rosterOutId: string,
+  playerInId: string,
+  price: number,
+  leagueId: string
+): Promise<SignPlayerResult> {
+  await requireSession();
+
+  const team = await db.fantasyTeam.findUnique({
+    where: { id: teamId },
+    include: { roster: true },
+  });
+  if (!team) return { error: "Team not found" };
+
+  const rosterOut = team.roster.find((r) => r.id === rosterOutId);
+  if (!rosterOut) return { error: "Player not found in squad" };
+
+  const already = team.roster.find((r) => r.playerId === playerInId);
+  if (already) return { error: "Player already in squad" };
+
+  const refund = Number(rosterOut.currentPrice);
+  const newBudget = Number(team.currentBudget) + refund - price;
+  if (newBudget < 0) return { error: "Insufficient budget for this transfer" };
+
+  const remainingPlayerIds = team.roster
+    .filter((r) => r.id !== rosterOutId)
+    .map((r) => r.playerId);
+
+  const pool = getMainDb();
+  if (remainingPlayerIds.length > 0) {
+    const teamCheckRes = await pool.query<{ count: string }>(
+      `SELECT COUNT(*) FROM player_team_seasons pts
+       JOIN team_seasons ts ON ts.id = pts.season_id
+       WHERE pts.player_id = $1
+         AND ts.team_id IN (
+           SELECT ts2.team_id FROM player_team_seasons pts2
+           JOIN team_seasons ts2 ON ts2.id = pts2.season_id
+           WHERE pts2.player_id = ANY($2::uuid[])
+         )`,
+      [playerInId, remainingPlayerIds]
+    );
+    const sameTeamCount = parseInt(teamCheckRes.rows[0]?.count ?? "0");
+    if (sameTeamCount >= 2) {
+      return { error: "Maximum 2 players from the same NDSC team" };
+    }
+  }
+
+  await db.$transaction([
+    db.fantasyRoster.delete({ where: { id: rosterOutId } }),
+    db.fantasyRoster.create({
+      data: { fantasyTeamId: teamId, playerId: playerInId, purchasePrice: price, currentPrice: price },
+    }),
+    db.fantasyTeam.update({
+      where: { id: teamId },
+      data: { currentBudget: newBudget },
+    }),
+    db.fantasyTransfer.create({
+      data: {
+        fantasyTeamId: teamId,
+        playerOutId: rosterOut.playerId,
+        playerInId,
+        transferCost: 0,
+      },
+    }),
+  ]);
+
+  revalidatePath(`/league/${leagueId}/players`);
+  revalidatePath(`/league/${leagueId}/my-team`);
+
+  return {};
+}

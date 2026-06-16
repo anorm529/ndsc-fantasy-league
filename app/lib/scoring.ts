@@ -36,6 +36,16 @@ function calcResultPoints(result: string | null): number {
   return 0;
 }
 
+function getWeekStart(): Date {
+  const now = new Date();
+  const day = now.getDay(); // 0=Sun, 1=Mon
+  const daysBack = day === 0 ? 6 : day - 1; // back to Monday
+  const monday = new Date(now);
+  monday.setDate(now.getDate() - daysBack);
+  monday.setHours(0, 0, 0, 0);
+  return monday;
+}
+
 export type ProcessGameResult = {
   scoreCount: number;
   priceChanges: number;
@@ -47,7 +57,6 @@ export async function processGame(
 ): Promise<ProcessGameResult> {
   const pool = getMainDb();
 
-  // Fetch game info
   const gameRes = await pool.query<{ id: string; result: string | null }>(
     "SELECT id::text, result FROM games WHERE id = $1",
     [gameId]
@@ -55,7 +64,6 @@ export async function processGame(
   const game = gameRes.rows[0];
   if (!game) throw new Error("Game not found");
 
-  // Fetch player stats for this game
   const statsRes = await pool.query<GameStatRow>(`
     SELECT
       pgs.player_id::text,
@@ -72,14 +80,12 @@ export async function processGame(
     WHERE pgs.game_id = $1
   `, [gameId]);
 
-  // Upsert the processed game record (creates or updates timestamp)
   const pg = await db.fantasyProcessedGame.upsert({
     where: { leagueId_gameId: { leagueId, gameId } },
     create: { leagueId, gameId, scoreCount: 0, priceChanges: 0 },
     update: { processedAt: new Date() },
   });
 
-  // Calculate and save scores
   const scores: { playerId: string; points: number }[] = [];
 
   for (const row of statsRes.rows) {
@@ -97,18 +103,27 @@ export async function processGame(
     scores.push({ playerId: row.player_id, points: total });
   }
 
-  // Price movements based on rolling 5-game average within this league
   const priceChanges = await calculatePriceMovements(pg.id, leagueId, scores);
   await applyPriceMovements(pg.id, leagueId, priceChanges);
-
-  // Update team totals
   await updateFantasyTeamPoints(leagueId);
 
-  // Write final counts back to processed game record
   await db.fantasyProcessedGame.update({
     where: { id: pg.id },
     data: { scoreCount: scores.length, priceChanges: priceChanges.length },
   });
+
+  try {
+    const prevGame = await db.fantasyProcessedGame.findFirst({
+      where: { leagueId, processedAt: { lt: pg.processedAt }, id: { not: pg.id } },
+      orderBy: { processedAt: "desc" },
+    });
+    await Promise.all([
+      snapshotOwnership(pg.id, leagueId),
+      snapshotTransferTrends(pg.id, leagueId, pg.processedAt, prevGame?.processedAt ?? null),
+    ]);
+  } catch {
+    // Analytics failures are non-fatal
+  }
 
   return { scoreCount: scores.length, priceChanges: priceChanges.length };
 }
@@ -134,7 +149,6 @@ async function calculatePriceMovements(
   const pg = await db.fantasyProcessedGame.findUnique({ where: { id: processedGameId } });
   if (!pg) return changes;
 
-  // Last 5 processed games for this league BEFORE this one (by processedAt)
   const priorGames = await db.fantasyProcessedGame.findMany({
     where: { leagueId, processedAt: { lt: pg.processedAt }, id: { not: processedGameId } },
     orderBy: { processedAt: "desc" },
@@ -197,11 +211,23 @@ async function applyPriceMovements(
   leagueId: string,
   changes: PriceChange[]
 ): Promise<void> {
+  if (changes.length === 0) return;
+
+  // Pre-fetch team IDs to avoid Prisma relation filter in updateMany
+  const teams = await db.fantasyTeam.findMany({ where: { leagueId }, select: { id: true } });
+  const teamIds = teams.map((t) => t.id);
+
   for (const c of changes) {
     await db.fantasyPlayerMeta.update({
       where: { playerId_leagueId: { playerId: c.playerId, leagueId } },
       data: { currentPrice: c.newPrice },
     });
+    if (teamIds.length > 0) {
+      await db.fantasyRoster.updateMany({
+        where: { playerId: c.playerId, fantasyTeamId: { in: teamIds } },
+        data: { currentPrice: c.newPrice },
+      });
+    }
     await db.fantasyPriceHistory.create({
       data: {
         playerId: c.playerId,
@@ -215,6 +241,76 @@ async function applyPriceMovements(
   }
 }
 
+// --- Ownership snapshot ---
+
+async function snapshotOwnership(processedGameId: string, leagueId: string): Promise<void> {
+  const teams = await db.fantasyTeam.findMany({ where: { leagueId }, select: { id: true } });
+  const totalTeams = teams.length;
+  if (totalTeams === 0) return;
+
+  const teamIds = teams.map((t) => t.id);
+  const ownership = await db.fantasyRoster.groupBy({
+    by: ["playerId"],
+    where: { fantasyTeamId: { in: teamIds } },
+    _count: { playerId: true },
+  });
+
+  for (const o of ownership) {
+    const pct = parseFloat(((o._count.playerId / totalTeams) * 100).toFixed(2));
+    await db.fantasyOwnershipHistory.upsert({
+      where: { playerId_leagueId_processedGameId: { playerId: o.playerId, leagueId, processedGameId } },
+      create: { playerId: o.playerId, leagueId, processedGameId, ownershipPercentage: pct, managerCount: o._count.playerId },
+      update: { ownershipPercentage: pct, managerCount: o._count.playerId },
+    });
+  }
+}
+
+// --- Transfer trends snapshot ---
+
+async function snapshotTransferTrends(
+  processedGameId: string,
+  leagueId: string,
+  currentProcessedAt: Date,
+  prevProcessedAt: Date | null
+): Promise<void> {
+  const teams = await db.fantasyTeam.findMany({ where: { leagueId }, select: { id: true } });
+  const teamIds = teams.map((t) => t.id);
+  if (teamIds.length === 0) return;
+
+  const dateFilter = prevProcessedAt
+    ? { gt: prevProcessedAt, lte: currentProcessedAt }
+    : { lte: currentProcessedAt };
+
+  const [inGroups, outGroups] = await Promise.all([
+    db.fantasyTransfer.groupBy({
+      by: ["playerInId"],
+      where: { fantasyTeamId: { in: teamIds }, transferDate: dateFilter },
+      _count: { playerInId: true },
+    }),
+    db.fantasyTransfer.groupBy({
+      by: ["playerOutId"],
+      where: { fantasyTeamId: { in: teamIds }, transferDate: dateFilter },
+      _count: { playerOutId: true },
+    }),
+  ]);
+
+  const inMap = new Map(inGroups.map((g) => [g.playerInId, g._count.playerInId]));
+  const outMap = new Map(outGroups.map((g) => [g.playerOutId, g._count.playerOutId]));
+  const allPlayerIds = new Set([...inMap.keys(), ...outMap.keys()]);
+
+  for (const playerId of allPlayerIds) {
+    const tIn = inMap.get(playerId) ?? 0;
+    const tOut = outMap.get(playerId) ?? 0;
+    await db.fantasyTransferTrends.upsert({
+      where: { playerId_leagueId_processedGameId: { playerId, leagueId, processedGameId } },
+      create: { playerId, leagueId, processedGameId, transfersIn: tIn, transfersOut: tOut, netTransfers: tIn - tOut },
+      update: { transfersIn: tIn, transfersOut: tOut, netTransfers: tIn - tOut },
+    });
+  }
+}
+
+// --- Team points (optimised: 2 queries instead of N×M) ---
+
 export async function updateFantasyTeamPoints(leagueId: string): Promise<void> {
   const teams = await db.fantasyTeam.findMany({
     where: { leagueId },
@@ -227,18 +323,46 @@ export async function updateFantasyTeamPoints(leagueId: string): Promise<void> {
   });
   const processedGameIds = processedGames.map((g) => g.id);
 
+  // Single query for all scores across all games in this league
+  const allScores = processedGameIds.length > 0
+    ? await db.fantasyScore.findMany({
+        where: { processedGameId: { in: processedGameIds } },
+        select: { playerId: true, fantasyPoints: true },
+      })
+    : [];
+
+  const playerTotals = new Map<string, number>();
+  for (const s of allScores) {
+    playerTotals.set(s.playerId, (playerTotals.get(s.playerId) ?? 0) + s.fantasyPoints);
+  }
+
+  // Weekly transfer penalty: 1 free per Mon–Sun week, extras cost 4 pts each
+  const weekStart = getWeekStart();
+  const teamIds = teams.map((t) => t.id);
+  const weeklyTransferGroups = teamIds.length > 0
+    ? await db.fantasyTransfer.groupBy({
+        by: ["fantasyTeamId"],
+        where: { fantasyTeamId: { in: teamIds }, transferDate: { gte: weekStart } },
+        _count: { fantasyTeamId: true },
+      })
+    : [];
+  const weeklyCountMap = new Map(
+    weeklyTransferGroups.map((g) => [g.fantasyTeamId, g._count.fantasyTeamId])
+  );
+
   for (const team of teams) {
     const captainId = team.roster.find((r) => r.isCaptain)?.playerId;
     let total = 0;
 
     for (const r of team.roster) {
-      const playerScores = await db.fantasyScore.findMany({
-        where: { playerId: r.playerId, processedGameId: { in: processedGameIds } },
-        select: { fantasyPoints: true },
-      });
-      const pts = playerScores.reduce((s, sc) => s + sc.fantasyPoints, 0);
+      const pts = playerTotals.get(r.playerId) ?? 0;
       total += r.playerId === captainId ? pts * 2 : pts;
     }
+
+    // Deduct 4 pts per extra transfer this calendar week
+    const weeklyCount = weeklyCountMap.get(team.id) ?? 0;
+    const penalty = Math.max(0, weeklyCount - 1) * 4;
+    total = Math.max(0, total - penalty);
 
     await db.fantasyTeam.update({
       where: { id: team.id },

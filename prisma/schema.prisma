@@ -16,10 +16,13 @@ model FantasyLeague {
   createdAt     DateTime  @default(now()) @map("created_at")
   updatedAt     DateTime  @updatedAt @map("updated_at")
 
-  teams          FantasyTeam[]
-  processedGames FantasyProcessedGame[]
-  playerMetas    FantasyPlayerMeta[]
-  auditLogs      FantasyAuditLog[]
+  teams            FantasyTeam[]
+  processedGames   FantasyProcessedGame[]
+  playerMetas      FantasyPlayerMeta[]
+  auditLogs        FantasyAuditLog[]
+  ownershipHistory FantasyOwnershipHistory[]
+  transferTrends   FantasyTransferTrends[]
+  awards           FantasyAward[]
 
   @@map("fantasy_leagues")
 }
@@ -80,7 +83,6 @@ model FantasyRoster {
   @@map("fantasy_roster")
 }
 
-// Tracks each main-DB game that has been pushed into this fantasy league
 model FantasyProcessedGame {
   id           String   @id @default(uuid()) @db.Uuid
   leagueId     String   @db.Uuid @map("league_id")
@@ -89,9 +91,11 @@ model FantasyProcessedGame {
   scoreCount   Int      @default(0) @map("score_count")
   priceChanges Int      @default(0) @map("price_changes")
 
-  league       FantasyLeague        @relation(fields: [leagueId], references: [id], onDelete: Cascade)
-  scores       FantasyScore[]
-  priceHistory FantasyPriceHistory[]
+  league           FantasyLeague           @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  scores           FantasyScore[]
+  priceHistory     FantasyPriceHistory[]
+  ownershipHistory FantasyOwnershipHistory[]
+  transferTrends   FantasyTransferTrends[]
 
   @@unique([leagueId, gameId])
   @@map("fantasy_processed_games")
@@ -150,6 +154,54 @@ model FantasyPlayerMeta {
 
   @@unique([playerId, leagueId])
   @@map("fantasy_player_meta")
+}
+
+model FantasyOwnershipHistory {
+  id                  String   @id @default(uuid()) @db.Uuid
+  playerId            String   @db.Uuid @map("player_id")
+  leagueId            String   @db.Uuid @map("league_id")
+  processedGameId     String   @db.Uuid @map("processed_game_id")
+  ownershipPercentage Decimal  @db.Decimal(5, 2) @map("ownership_percentage")
+  managerCount        Int      @map("manager_count")
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  league        FantasyLeague        @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  processedGame FantasyProcessedGame @relation(fields: [processedGameId], references: [id], onDelete: Cascade)
+
+  @@unique([playerId, leagueId, processedGameId])
+  @@map("fantasy_ownership_history")
+}
+
+model FantasyTransferTrends {
+  id              String   @id @default(uuid()) @db.Uuid
+  playerId        String   @db.Uuid @map("player_id")
+  leagueId        String   @db.Uuid @map("league_id")
+  processedGameId String   @db.Uuid @map("processed_game_id")
+  transfersIn     Int      @default(0) @map("transfers_in")
+  transfersOut    Int      @default(0) @map("transfers_out")
+  netTransfers    Int      @default(0) @map("net_transfers")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  league        FantasyLeague        @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  processedGame FantasyProcessedGame @relation(fields: [processedGameId], references: [id], onDelete: Cascade)
+
+  @@unique([playerId, leagueId, processedGameId])
+  @@map("fantasy_transfer_trends")
+}
+
+model FantasyAward {
+  id             String   @id @default(uuid()) @db.Uuid
+  leagueId       String   @db.Uuid @map("league_id")
+  awardName      String   @map("award_name")
+  winnerTeamId   String?  @db.Uuid @map("winner_team_id")
+  winnerPlayerId String?  @db.Uuid @map("winner_player_id")
+  value          String
+  details        String?
+  generatedAt    DateTime @default(now()) @map("generated_at")
+
+  league FantasyLeague @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+
+  @@map("fantasy_awards")
 }
 
 model FantasyAuditLog {
