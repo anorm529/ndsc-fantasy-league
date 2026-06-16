@@ -4,6 +4,7 @@ import { getMainDb } from "@/app/lib/main-db";
 import { logoutAction } from "@/app/lib/actions";
 import Link from "next/link";
 
+export const dynamic = 'force-dynamic';
 export const metadata = { title: "NDSC Fantasy — Select League" };
 
 const STATUS_LABEL: Record<string, string> = {

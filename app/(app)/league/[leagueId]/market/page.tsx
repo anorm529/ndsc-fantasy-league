@@ -3,6 +3,7 @@ import { db } from "@/app/lib/fantasy-db";
 import { getMainDb } from "@/app/lib/main-db";
 import { notFound } from "next/navigation";
 
+export const dynamic = 'force-dynamic';
 export const metadata = { title: "Market — NDSC Fantasy" };
 
 function PriceSparkline({ prices }: { prices: number[] }) {

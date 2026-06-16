@@ -31,6 +31,7 @@ export async function generateMetadata({ params }: { params: Promise<{ leagueId:
   return { title: `${league?.name ?? "League"} Admin — NDSC Fantasy` };
 }
 
+export const dynamic = 'force-dynamic';
 export default async function LeagueAdminPage({
   params,
 }: {

@@ -4,6 +4,7 @@ import { getMainDb } from "@/app/lib/main-db";
 import { notFound } from "next/navigation";
 import { AWARD_DEFS } from "@/app/lib/awards";
 
+export const dynamic = 'force-dynamic';
 export const metadata = { title: "Awards — NDSC Fantasy" };
 
 export default async function AwardsPage({ params }: { params: Promise<{ leagueId: string }> }) {

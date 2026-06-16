@@ -6,6 +6,7 @@ import { logoutAction } from "@/app/lib/actions";
 import Link from "next/link";
 import { DeleteLeagueButton } from "./delete-league-button";
 
+export const dynamic = 'force-dynamic';
 export const metadata = { title: "Admin — NDSC Fantasy" };
 
 const STATUS_COLOUR: Record<string, string> = {

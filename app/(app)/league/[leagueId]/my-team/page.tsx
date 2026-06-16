@@ -6,6 +6,7 @@ import Link from "next/link";
 import { SetCaptainButton } from "./set-captain-button";
 import { RemovePlayerButton } from "./remove-player-button";
 
+export const dynamic = 'force-dynamic';
 export const metadata = { title: "My Team — NDSC Fantasy" };
 
 export default async function MyTeamPage({

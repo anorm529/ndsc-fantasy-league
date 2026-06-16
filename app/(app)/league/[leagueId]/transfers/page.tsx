@@ -3,6 +3,7 @@ import { db } from "@/app/lib/fantasy-db";
 import { getMainDb } from "@/app/lib/main-db";
 import { notFound } from "next/navigation";
 
+export const dynamic = 'force-dynamic';
 export const metadata = { title: "Transfers — NDSC Fantasy" };
 
 export default async function TransfersPage({ params }: { params: Promise<{ leagueId: string }> }) {

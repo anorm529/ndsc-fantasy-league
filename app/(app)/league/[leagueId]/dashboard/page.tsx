@@ -4,6 +4,7 @@ import { getMainDb } from "@/app/lib/main-db";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 
+export const dynamic = 'force-dynamic';
 export const metadata = { title: "Dashboard — NDSC Fantasy" };
 
 export default async function DashboardPage({

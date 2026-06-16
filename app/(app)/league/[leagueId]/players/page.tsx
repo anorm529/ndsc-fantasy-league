@@ -11,6 +11,7 @@ import {
   getOwnershipForLeague,
 } from "@/app/lib/cached-queries";
 
+export const dynamic = 'force-dynamic';
 export const metadata = { title: "Players — NDSC Fantasy" };
 
 export default async function PlayersPage({

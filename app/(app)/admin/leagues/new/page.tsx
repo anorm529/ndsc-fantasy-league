@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { createLeagueAction } from "./actions";
 import Link from "next/link";
 
+export const dynamic = 'force-dynamic';
 export const metadata = { title: "New League — NDSC Fantasy Admin" };
 
 export default async function NewLeaguePage() {
