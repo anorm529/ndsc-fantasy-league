@@ -1,8 +1,8 @@
 @import "tailwindcss";
 
 @theme inline {
-  --color-ndsc-navy: #0f2044;
-  --color-ndsc-gold: #f5c842;
+  --color-ndsc-navy: #0c1f3a;
+  --color-ndsc-gold: #00e5b4;
   --color-ndsc-green: #2d7a45;
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
