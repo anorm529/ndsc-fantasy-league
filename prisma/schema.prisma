@@ -8,13 +8,14 @@ datasource db {
 }
 
 model FantasyLeague {
-  id            String    @id @default(uuid()) @db.Uuid
-  name          String
-  mainSeasonId  String    @db.Uuid @map("main_season_id")
-  prevSeasonId  String?   @db.Uuid @map("prev_season_id")
-  status        String    @default("draft")
-  createdAt     DateTime  @default(now()) @map("created_at")
-  updatedAt     DateTime  @updatedAt @map("updated_at")
+  id                 String    @id @default(uuid()) @db.Uuid
+  name               String
+  mainSeasonId       String    @db.Uuid @map("main_season_id")
+  prevSeasonId       String?   @db.Uuid @map("prev_season_id")
+  status             String    @default("draft")
+  transferWindowOpen Boolean   @default(true) @map("transfer_window_open")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
 
   teams            FantasyTeam[]
   processedGames   FantasyProcessedGame[]

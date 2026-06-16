@@ -43,6 +43,16 @@ export async function updateLeagueStatusAction(leagueId: string, status: string)
   revalidatePath("/home");
 }
 
+export async function toggleTransferWindowAction(leagueId: string, open: boolean) {
+  const session = await requireSession();
+  await assertAdmin(session.memberUserId);
+
+  await db.fantasyLeague.update({ where: { id: leagueId }, data: { transferWindowOpen: open } });
+  await auditLog(session.memberUserId, leagueId, "toggle_transfer_window", "league", leagueId, open ? "Transfer window OPENED" : "Transfer window CLOSED");
+  revalidatePath(`/admin/leagues/${leagueId}`);
+  revalidatePath(`/league/${leagueId}/players`);
+}
+
 export async function generatePricesAction(
   leagueId: string
 ): Promise<{ error?: string; count?: number }> {

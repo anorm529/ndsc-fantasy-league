@@ -114,7 +114,7 @@ export default async function DashboardPage({
         />
         <StatCard
           label="Squad"
-          value={fantasyTeam ? `${fantasyTeam.roster.length}/5` : "0/5"}
+          value={fantasyTeam ? `${fantasyTeam.roster.length}/7` : "0/7"}
           sub="players"
         />
         <StatCard

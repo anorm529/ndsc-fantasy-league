@@ -10,7 +10,7 @@ import { PushGameButton } from "./push-game-button";
 import { SetPlayerPriceForm } from "./set-player-price-form";
 import { SetPlayerStatusForm } from "./set-player-status-form";
 import { GenerateAwardsButton } from "./generate-awards-button";
-import { updateLeagueStatusAction } from "./actions";
+import { updateLeagueStatusAction, toggleTransferWindowAction } from "./actions";
 
 type GameRow = {
   id: string;
@@ -164,38 +164,73 @@ export default async function LeagueAdminPage({
       <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8 space-y-8">
 
         {/* League status banner */}
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 flex items-center justify-between flex-wrap gap-4">
-          <div>
-            <h1 className="text-xl font-bold text-slate-900">{league.name}</h1>
-            <p className="text-slate-500 text-sm">
-              Status:{" "}
-              <span className={`font-semibold ${
-                league.status === "active" ? "text-green-600"
-                : league.status === "closed" ? "text-slate-500"
-                : "text-amber-600"
-              }`}>
-                {league.status}
-              </span>
-            </p>
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 space-y-4">
+          <div className="flex items-center justify-between flex-wrap gap-4">
+            <div>
+              <h1 className="text-xl font-bold text-slate-900">{league.name}</h1>
+              <p className="text-slate-500 text-sm">
+                Status:{" "}
+                <span className={`font-semibold ${
+                  league.status === "active" ? "text-green-600"
+                  : league.status === "closed" ? "text-slate-500"
+                  : "text-amber-600"
+                }`}>
+                  {league.status}
+                </span>
+              </p>
+            </div>
+            <div className="flex gap-2 flex-wrap">
+              {league.status !== "active" && (
+                <form action={async () => { "use server"; await updateLeagueStatusAction(leagueId, "active"); }}>
+                  <button type="submit" className="text-sm rounded-lg bg-green-600 text-white px-4 py-2 font-medium hover:bg-green-700 transition-colors">
+                    Set Active
+                  </button>
+                </form>
+              )}
+              {league.status !== "closed" && (
+                <ArchiveLeagueButton leagueId={leagueId} leagueName={league.name} />
+              )}
+              {league.status !== "draft" && (
+                <form action={async () => { "use server"; await updateLeagueStatusAction(leagueId, "draft"); }}>
+                  <button type="submit" className="text-sm rounded-lg border border-slate-300 text-slate-600 px-4 py-2 font-medium hover:bg-slate-50 transition-colors">
+                    Back to Draft
+                  </button>
+                </form>
+              )}
+            </div>
           </div>
-          <div className="flex gap-2 flex-wrap">
-            {league.status !== "active" && (
-              <form action={async () => { "use server"; await updateLeagueStatusAction(leagueId, "active"); }}>
-                <button type="submit" className="text-sm rounded-lg bg-green-600 text-white px-4 py-2 font-medium hover:bg-green-700 transition-colors">
-                  Set Active
-                </button>
-              </form>
-            )}
-            {league.status !== "closed" && (
-              <ArchiveLeagueButton leagueId={leagueId} leagueName={league.name} />
-            )}
-            {league.status !== "draft" && (
-              <form action={async () => { "use server"; await updateLeagueStatusAction(leagueId, "draft"); }}>
-                <button type="submit" className="text-sm rounded-lg border border-slate-300 text-slate-600 px-4 py-2 font-medium hover:bg-slate-50 transition-colors">
-                  Back to Draft
-                </button>
-              </form>
-            )}
+
+          {/* Transfer window toggle */}
+          <div className={`flex items-center justify-between rounded-lg px-4 py-3 border ${
+            league.transferWindowOpen
+              ? "bg-green-50 border-green-200"
+              : "bg-red-50 border-red-200"
+          }`}>
+            <div>
+              <p className={`text-sm font-semibold ${league.transferWindowOpen ? "text-green-800" : "text-red-800"}`}>
+                Transfer Window: {league.transferWindowOpen ? "OPEN" : "CLOSED"}
+              </p>
+              <p className={`text-xs mt-0.5 ${league.transferWindowOpen ? "text-green-600" : "text-red-600"}`}>
+                {league.transferWindowOpen
+                  ? "Managers can sign and transfer players."
+                  : "All transfers are currently blocked. Managers cannot sign or transfer players."}
+              </p>
+            </div>
+            <form action={async () => {
+              "use server";
+              await toggleTransferWindowAction(leagueId, !league.transferWindowOpen);
+            }}>
+              <button
+                type="submit"
+                className={`text-sm rounded-lg px-4 py-2 font-medium transition-colors ${
+                  league.transferWindowOpen
+                    ? "bg-red-600 text-white hover:bg-red-700"
+                    : "bg-green-600 text-white hover:bg-green-700"
+                }`}
+              >
+                {league.transferWindowOpen ? "Close Window" : "Open Window"}
+              </button>
+            </form>
           </div>
         </div>
 

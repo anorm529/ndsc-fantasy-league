@@ -16,6 +16,9 @@ export async function signPlayerAction(
 ): Promise<SignPlayerResult> {
   await requireSession();
 
+  const league = await db.fantasyLeague.findUnique({ where: { id: leagueId } });
+  if (!league?.transferWindowOpen) return { error: "Transfer window is currently closed" };
+
   const team = await db.fantasyTeam.findUnique({
     where: { id: teamId },
     include: { roster: true },
@@ -70,6 +73,9 @@ export async function transferPlayerAction(
   leagueId: string
 ): Promise<SignPlayerResult> {
   await requireSession();
+
+  const league = await db.fantasyLeague.findUnique({ where: { id: leagueId } });
+  if (!league?.transferWindowOpen) return { error: "Transfer window is currently closed" };
 
   const team = await db.fantasyTeam.findUnique({
     where: { id: teamId },

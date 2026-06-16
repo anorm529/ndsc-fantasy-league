@@ -31,6 +31,8 @@ export default async function PlayersPage({
   const league = await db.fantasyLeague.findUnique({ where: { id: leagueId } });
   if (!league) notFound();
 
+  const transferWindowOpen = league.transferWindowOpen;
+
   const seasonId = league.mainSeasonId;
 
   const playerRes = await pool.query<PlayerRow>(
@@ -157,6 +159,16 @@ export default async function PlayersPage({
         <h1 className="text-2xl font-bold text-slate-900">Players</h1>
         <p className="text-slate-500 text-sm mt-0.5">Browse, filter, and sign players</p>
       </div>
+
+      {/* Transfer window closed banner */}
+      {!transferWindowOpen && (
+        <div className="rounded-xl border border-red-300 bg-red-50 p-4">
+          <p className="text-sm font-semibold text-red-800">Transfer window is closed</p>
+          <p className="text-xs text-red-600 mt-0.5">
+            Signing and transfers are currently disabled. The window will reopen before the next deadline — check back soon.
+          </p>
+        </div>
+      )}
 
       {/* Transfer mode banner */}
       {isTransferMode && rosterOutPlayerName && (
@@ -357,9 +369,10 @@ export default async function PlayersPage({
                           playerId={p.id}
                           playerName={p.display_name}
                           price={meta.currentPrice}
-                          disabled={!canAfford || !fantasyTeam}
+                          disabled={!transferWindowOpen || !canAfford || !fantasyTeam}
                           disabledReason={
-                            !fantasyTeam ? "Create team first"
+                            !transferWindowOpen ? "Transfer window closed"
+                            : !fantasyTeam ? "Create team first"
                             : !canAfford ? "Insufficient budget"
                             : undefined
                           }
@@ -374,9 +387,10 @@ export default async function PlayersPage({
                           playerId={p.id}
                           playerName={p.display_name}
                           price={meta.currentPrice}
-                          disabled={squadFull || !canAfford || !fantasyTeam}
+                          disabled={!transferWindowOpen || squadFull || !canAfford || !fantasyTeam}
                           disabledReason={
-                            !fantasyTeam ? "Create team first"
+                            !transferWindowOpen ? "Transfer window closed"
+                            : !fantasyTeam ? "Create team first"
                             : squadFull ? "Squad full — use Transfer from My Team"
                             : !canAfford ? "Insufficient budget"
                             : undefined
