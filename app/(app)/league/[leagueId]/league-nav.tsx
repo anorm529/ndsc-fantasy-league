@@ -44,7 +44,7 @@ export function LeagueNav({ leagueId, leagueName, displayName, role }: Props) {
           </Link>
 
           {/* Nav links */}
-          <nav className="flex items-center gap-0.5 overflow-x-auto scrollbar-hide">
+          <nav className="flex items-center gap-0.5 overflow-x-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
             {links.map((l) => (
               <Link
                 key={l.href}

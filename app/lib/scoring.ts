@@ -36,6 +36,16 @@ function calcResultPoints(result: string | null): number {
   return 0;
 }
 
+function getWeekStart(): Date {
+  const now = new Date();
+  const day = now.getDay(); // 0=Sun, 1=Mon
+  const daysBack = day === 0 ? 6 : day - 1; // back to Monday
+  const monday = new Date(now);
+  monday.setDate(now.getDate() - daysBack);
+  monday.setHours(0, 0, 0, 0);
+  return monday;
+}
+
 export type ProcessGameResult = {
   scoreCount: number;
   priceChanges: number;
@@ -102,7 +112,6 @@ export async function processGame(
     data: { scoreCount: scores.length, priceChanges: priceChanges.length },
   });
 
-  // Analytics snapshots — non-critical, don't let errors block game push
   try {
     const prevGame = await db.fantasyProcessedGame.findFirst({
       where: { leagueId, processedAt: { lt: pg.processedAt }, id: { not: pg.id } },
@@ -202,16 +211,23 @@ async function applyPriceMovements(
   leagueId: string,
   changes: PriceChange[]
 ): Promise<void> {
+  if (changes.length === 0) return;
+
+  // Pre-fetch team IDs to avoid Prisma relation filter in updateMany
+  const teams = await db.fantasyTeam.findMany({ where: { leagueId }, select: { id: true } });
+  const teamIds = teams.map((t) => t.id);
+
   for (const c of changes) {
     await db.fantasyPlayerMeta.update({
       where: { playerId_leagueId: { playerId: c.playerId, leagueId } },
       data: { currentPrice: c.newPrice },
     });
-    // Keep roster currentPrice in sync so profit/loss is always accurate
-    await db.fantasyRoster.updateMany({
-      where: { playerId: c.playerId, team: { leagueId } },
-      data: { currentPrice: c.newPrice },
-    });
+    if (teamIds.length > 0) {
+      await db.fantasyRoster.updateMany({
+        where: { playerId: c.playerId, fantasyTeamId: { in: teamIds } },
+        data: { currentPrice: c.newPrice },
+      });
+    }
     await db.fantasyPriceHistory.create({
       data: {
         playerId: c.playerId,
@@ -293,7 +309,7 @@ async function snapshotTransferTrends(
   }
 }
 
-// --- Team points ---
+// --- Team points (optimised: 2 queries instead of N×M) ---
 
 export async function updateFantasyTeamPoints(leagueId: string): Promise<void> {
   const teams = await db.fantasyTeam.findMany({
@@ -307,18 +323,46 @@ export async function updateFantasyTeamPoints(leagueId: string): Promise<void> {
   });
   const processedGameIds = processedGames.map((g) => g.id);
 
+  // Single query for all scores across all games in this league
+  const allScores = processedGameIds.length > 0
+    ? await db.fantasyScore.findMany({
+        where: { processedGameId: { in: processedGameIds } },
+        select: { playerId: true, fantasyPoints: true },
+      })
+    : [];
+
+  const playerTotals = new Map<string, number>();
+  for (const s of allScores) {
+    playerTotals.set(s.playerId, (playerTotals.get(s.playerId) ?? 0) + s.fantasyPoints);
+  }
+
+  // Weekly transfer penalty: 1 free per Mon–Sun week, extras cost 4 pts each
+  const weekStart = getWeekStart();
+  const teamIds = teams.map((t) => t.id);
+  const weeklyTransferGroups = teamIds.length > 0
+    ? await db.fantasyTransfer.groupBy({
+        by: ["fantasyTeamId"],
+        where: { fantasyTeamId: { in: teamIds }, transferDate: { gte: weekStart } },
+        _count: { fantasyTeamId: true },
+      })
+    : [];
+  const weeklyCountMap = new Map(
+    weeklyTransferGroups.map((g) => [g.fantasyTeamId, g._count.fantasyTeamId])
+  );
+
   for (const team of teams) {
     const captainId = team.roster.find((r) => r.isCaptain)?.playerId;
     let total = 0;
 
     for (const r of team.roster) {
-      const playerScores = await db.fantasyScore.findMany({
-        where: { playerId: r.playerId, processedGameId: { in: processedGameIds } },
-        select: { fantasyPoints: true },
-      });
-      const pts = playerScores.reduce((s, sc) => s + sc.fantasyPoints, 0);
+      const pts = playerTotals.get(r.playerId) ?? 0;
       total += r.playerId === captainId ? pts * 2 : pts;
     }
+
+    // Deduct 4 pts per extra transfer this calendar week
+    const weeklyCount = weeklyCountMap.get(team.id) ?? 0;
+    const penalty = Math.max(0, weeklyCount - 1) * 4;
+    total = Math.max(0, total - penalty);
 
     await db.fantasyTeam.update({
       where: { id: team.id },

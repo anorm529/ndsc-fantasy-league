@@ -26,8 +26,15 @@ function PriceSparkline({ prices }: { prices: number[] }) {
   );
 }
 
-export default async function MarketPage({ params }: { params: Promise<{ leagueId: string }> }) {
+export default async function MarketPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ leagueId: string }>;
+  searchParams: Promise<{ search?: string; sort?: string }>;
+}) {
   const { leagueId } = await params;
+  const { search, sort = "price" } = await searchParams;
   const session = await requireSession();
   const pool = getMainDb();
 
@@ -144,6 +151,24 @@ export default async function MarketPage({ params }: { params: Promise<{ leagueI
 
   const hasHistory = priceHistory.length > 0;
 
+  // Search + sort for full table
+  let filteredMarket = [...marketData];
+  if (search) {
+    const q = search.toLowerCase();
+    filteredMarket = filteredMarket.filter((p) => p.name.toLowerCase().includes(q));
+  }
+  if (sort === "risers") {
+    filteredMarket.sort((a, b) => b.totalChange - a.totalChange);
+  } else if (sort === "fallers") {
+    filteredMarket.sort((a, b) => a.totalChange - b.totalChange);
+  } else if (sort === "ownership") {
+    filteredMarket.sort((a, b) => b.ownershipPct - a.ownershipPct);
+  } else if (sort === "pnl") {
+    filteredMarket.sort((a, b) => (b.profit ?? -Infinity) - (a.profit ?? -Infinity));
+  } else {
+    filteredMarket.sort((a, b) => b.currentPrice - a.currentPrice);
+  }
+
   return (
     <div className="space-y-8">
       <div>
@@ -177,10 +202,45 @@ export default async function MarketPage({ params }: { params: Promise<{ leagueI
         }))} empty={!myTeam || myTeam.roster.length === 0} />
       </div>
 
+      {/* Search + sort */}
+      <form method="GET" className="flex flex-wrap gap-3 items-center">
+        <input
+          name="search"
+          defaultValue={search}
+          placeholder="Search player…"
+          className="rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ndsc-navy/20 w-48"
+        />
+        <select
+          name="sort"
+          defaultValue={sort}
+          className="rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ndsc-navy/20"
+        >
+          <option value="price">Sort: Price</option>
+          <option value="risers">Sort: Biggest Risers</option>
+          <option value="fallers">Sort: Biggest Fallers</option>
+          <option value="ownership">Sort: Most Owned</option>
+          <option value="pnl">Sort: My P&amp;L</option>
+        </select>
+        <button
+          type="submit"
+          className="rounded-lg bg-ndsc-navy text-white px-4 py-2 text-sm font-medium hover:bg-slate-700 transition-colors"
+        >
+          Apply
+        </button>
+        {(search || sort !== "price") && (
+          <a href={`/league/${leagueId}/market`} className="text-sm text-slate-500 hover:text-slate-700">
+            Reset
+          </a>
+        )}
+      </form>
+
       {/* Full player table */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
         <div className="px-5 py-4 border-b border-slate-100">
-          <h2 className="font-semibold text-slate-800">All Players</h2>
+          <h2 className="font-semibold text-slate-800">
+            All Players
+            {search && <span className="ml-2 text-sm font-normal text-slate-400">— {filteredMarket.length} result{filteredMarket.length !== 1 ? "s" : ""}</span>}
+          </h2>
           <p className="text-xs text-slate-400 mt-0.5">Price history updates each time a game is pushed. Your P&L shown if player is in your squad.</p>
         </div>
         {playerMetas.length === 0 ? (
@@ -204,7 +264,12 @@ export default async function MarketPage({ params }: { params: Promise<{ leagueI
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {marketData.map((p) => {
+                {filteredMarket.length === 0 && (
+                  <tr>
+                    <td colSpan={9} className="text-center py-10 text-slate-400">No players match your search</td>
+                  </tr>
+                )}
+                {filteredMarket.map((p) => {
                   const changePositive = p.totalChange > 0;
                   const changeNeutral = p.totalChange === 0;
                   const profitPositive = (p.profit ?? 0) >= 0;
