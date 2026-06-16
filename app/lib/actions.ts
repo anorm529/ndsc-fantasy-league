@@ -39,7 +39,7 @@ export async function loginAction(
   const { token, expiresAt } = await createSession(user.id, user.display_name ? `${user.display_name}'s Team` : undefined);
   await setSessionCookie(token, expiresAt);
 
-  redirect("/dashboard");
+  redirect("/home");
 }
 
 export async function logoutAction() {
