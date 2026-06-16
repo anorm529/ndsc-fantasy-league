@@ -1,3 +1,4 @@
+import Image from "next/image";
 import { LoginForm } from "./login-form";
 import { getSession } from "@/app/lib/auth";
 import { redirect } from "next/navigation";
@@ -15,8 +16,14 @@ export default async function LoginPage() {
       <div className="w-full max-w-md">
         {/* Logo / Brand */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-ndsc-gold mb-4 shadow-lg">
-            <span className="text-3xl font-black text-ndsc-navy">N</span>
+          <div className="inline-flex items-center justify-center mb-4">
+            <Image
+              src="/fantasy-logo.png"
+              alt="NDSC Fantasy League"
+              width={120}
+              height={120}
+              priority
+            />
           </div>
           <h1 className="text-3xl font-black text-white tracking-tight">
             NDSC Fantasy

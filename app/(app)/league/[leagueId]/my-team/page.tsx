@@ -1,7 +1,7 @@
 import { requireSession } from "@/app/lib/auth";
 import { db } from "@/app/lib/fantasy-db";
 import { getMainDb } from "@/app/lib/main-db";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import { SetCaptainButton } from "./set-captain-button";
 import { RemovePlayerButton } from "./remove-player-button";
@@ -37,10 +37,26 @@ export default async function MyTeamPage({
   });
 
   if (!team) {
-    team = await db.fantasyTeam.create({
-      data: { fantasyUserId: fantasyUser.id, leagueId, currentBudget: Number(league.startingBudget) },
-      include: { roster: true },
-    });
+    // Only auto-create for admins — regular users must be approved via join request
+    const pool2 = getMainDb();
+    const roleRes = await pool2.query<{ role: string }>(
+      "SELECT role FROM users WHERE id = $1",
+      [session.memberUserId]
+    );
+    const role = roleRes.rows[0]?.role;
+    if (role === "owner" || role === "admin") {
+      team = await db.fantasyTeam.create({
+        data: {
+          fantasyUserId: fantasyUser.id,
+          leagueId,
+          teamName: fantasyUser.teamName,
+          currentBudget: Number(league.startingBudget),
+        },
+        include: { roster: true },
+      });
+    } else {
+      redirect("/home");
+    }
   }
 
   const rosterPlayerIds = team.roster.map((r) => r.playerId);
@@ -89,7 +105,7 @@ export default async function MyTeamPage({
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-slate-900">My Team</h1>
+        <h1 className="text-2xl font-bold text-slate-900">{team.teamName}</h1>
         <p className="text-slate-500 text-sm mt-0.5">Manage your squad, captain, and transfers</p>
       </div>
 
@@ -97,7 +113,7 @@ export default async function MyTeamPage({
         <div className="flex flex-wrap gap-6">
           <BudgetStat label="Remaining Budget" value={`£${budget.toFixed(1)}M`} />
           <BudgetStat label="Squad Value" value={`£${squadValue.toFixed(1)}M`} />
-          <BudgetStat label="Players" value={`${team.roster.length} / 5`} />
+          <BudgetStat label="Players" value={`${team.roster.length} / ${league.squadSize}`} />
           <BudgetStat
             label="Season P&L"
             value={`${totalPnl >= 0 ? "+" : ""}£${totalPnl.toFixed(1)}M`}
@@ -203,10 +219,11 @@ export default async function MyTeamPage({
       <div className="bg-slate-800 rounded-xl p-5 text-white text-sm">
         <h3 className="font-semibold mb-2 text-ndsc-gold">Squad Rules</h3>
         <ul className="space-y-1 text-slate-300 text-xs">
-          <li>• Exactly 5 players · max 2 from any one NDSC team</li>
-          <li>• Minimum 2 female players · minimum 1 rookie/development player</li>
-          <li>• Budget: £40.0M · 1 free transfer per week (extras cost -4 pts)</li>
+          <li>• {league.squadSize} players · max {league.maxPlayersPerTeam} from the same NDSC team</li>
+          <li>• Budget: £{Number(league.startingBudget).toFixed(0)}M · 1 free transfer per week · extras cost −15 pts</li>
           <li>• Captain scores 2× fantasy points</li>
+          <li>• Rookie / development players score 2× automatically</li>
+          <li>• Women majority (4+ players) earns +3 pts per game for the whole squad</li>
         </ul>
       </div>
     </div>

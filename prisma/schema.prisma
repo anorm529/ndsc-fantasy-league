@@ -19,10 +19,12 @@ model FantasyLeague {
   startingBudget     Decimal   @default(50.0) @db.Decimal(10, 1) @map("starting_budget")
   squadSize          Int       @default(7) @map("squad_size")
   maxPlayersPerTeam  Int       @default(3) @map("max_players_per_team")
+  joinRequestsOpen   Boolean   @default(true) @map("join_requests_open")
   createdAt          DateTime  @default(now()) @map("created_at")
   updatedAt          DateTime  @updatedAt @map("updated_at")
 
   teams            FantasyTeam[]
+  joinRequests     FantasyJoinRequest[]
   processedGames   FantasyProcessedGame[]
   playerMetas      FantasyPlayerMeta[]
   auditLogs        FantasyAuditLog[]
@@ -61,6 +63,7 @@ model FantasyTeam {
   id            String   @id @default(uuid()) @db.Uuid
   fantasyUserId String   @db.Uuid @map("fantasy_user_id")
   leagueId      String   @db.Uuid @map("league_id")
+  teamName      String   @default("My Fantasy Team") @map("team_name")
   currentBudget Decimal  @default(50.0) @db.Decimal(10, 1) @map("current_budget")
   totalPoints   Int      @default(0) @map("total_points")
   overallRank   Int?     @map("overall_rank")
@@ -208,6 +211,21 @@ model FantasyAward {
   league FantasyLeague @relation(fields: [leagueId], references: [id], onDelete: Cascade)
 
   @@map("fantasy_awards")
+}
+
+model FantasyJoinRequest {
+  id           String   @id @default(uuid()) @db.Uuid
+  leagueId     String   @db.Uuid @map("league_id")
+  memberUserId String   @db.Uuid @map("member_user_id")
+  teamName     String   @map("team_name")
+  status       String   @default("pending")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  league FantasyLeague @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+
+  @@unique([leagueId, memberUserId])
+  @@map("fantasy_join_requests")
 }
 
 model FantasyAuditLog {

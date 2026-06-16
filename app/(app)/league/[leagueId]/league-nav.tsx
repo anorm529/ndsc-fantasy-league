@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { logoutAction } from "@/app/lib/actions";
@@ -32,9 +33,13 @@ export function LeagueNav({ leagueId, leagueName, displayName, role }: Props) {
         <div className="flex items-center justify-between h-16">
           {/* Brand — clicking goes back to league selection */}
           <Link href="/home" className="flex items-center gap-2.5 group">
-            <div className="w-8 h-8 rounded-full bg-ndsc-gold flex items-center justify-center flex-shrink-0">
-              <span className="text-sm font-black text-ndsc-navy">N</span>
-            </div>
+            <Image
+              src="/fantasy-logo.png"
+              alt="NDSC Fantasy"
+              width={36}
+              height={36}
+              className="flex-shrink-0"
+            />
             <div className="hidden sm:block">
               <p className="text-white font-bold text-sm leading-none">NDSC Fantasy</p>
               <p className="text-slate-400 text-xs leading-none mt-0.5 group-hover:text-ndsc-gold transition-colors truncate max-w-40">

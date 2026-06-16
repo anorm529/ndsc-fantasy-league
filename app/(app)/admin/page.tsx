@@ -1,3 +1,4 @@
+import Image from "next/image";
 import { requireSession } from "@/app/lib/auth";
 import { db } from "@/app/lib/fantasy-db";
 import { getMainDb } from "@/app/lib/main-db";
@@ -45,9 +46,12 @@ export default async function AdminPage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
             <Link href="/home" className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-full bg-ndsc-gold flex items-center justify-center">
-                <span className="text-sm font-black text-ndsc-navy">N</span>
-              </div>
+              <Image
+                src="/fantasy-logo.png"
+                alt="NDSC Fantasy"
+                width={36}
+                height={36}
+              />
               <span className="text-white font-bold text-lg hidden sm:block">NDSC Fantasy Admin</span>
             </Link>
             <div className="flex items-center gap-4">

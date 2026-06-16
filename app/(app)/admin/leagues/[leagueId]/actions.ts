@@ -242,7 +242,7 @@ export async function archiveAndCloseLeagueAction(
     finalStandings: teams.map((t, i) => ({
       rank: i + 1,
       managerName: memberNames.find((m) => m.id === t.user.memberUserId)?.display_name ?? "Unknown",
-      teamName: t.user.teamName,
+      teamName: t.teamName,
       totalPoints: t.totalPoints,
     })),
     topScorers: topScorers.map((s) => ({
@@ -298,6 +298,66 @@ export async function archiveAndCloseLeagueAction(
       transfers: transfersDeleted.count,
     },
   };
+}
+
+export async function approveJoinRequestAction(requestId: string, leagueId: string) {
+  const session = await requireSession();
+  await assertAdmin(session.memberUserId);
+
+  const request = await db.fantasyJoinRequest.findUnique({ where: { id: requestId } });
+  if (!request) return;
+
+  const league = await db.fantasyLeague.findUnique({ where: { id: leagueId } });
+  if (!league) return;
+
+  let fantasyUser = await db.fantasyUser.findUnique({ where: { memberUserId: request.memberUserId } });
+  if (!fantasyUser) {
+    fantasyUser = await db.fantasyUser.create({
+      data: { memberUserId: request.memberUserId, teamName: request.teamName },
+    });
+  }
+
+  // Upsert so re-approving a rejected request still works
+  await db.fantasyTeam.upsert({
+    where: { fantasyUserId_leagueId: { fantasyUserId: fantasyUser.id, leagueId } },
+    create: {
+      fantasyUserId: fantasyUser.id,
+      leagueId,
+      teamName: request.teamName,
+      currentBudget: league.startingBudget,
+    },
+    update: {},
+  });
+
+  await db.fantasyJoinRequest.update({ where: { id: requestId }, data: { status: "approved" } });
+
+  await auditLog(session.memberUserId, leagueId, "approve_join_request", "join_request", requestId, `Approved: ${request.teamName}`);
+  revalidatePath(`/admin/leagues/${leagueId}`);
+  revalidatePath("/home");
+}
+
+export async function rejectJoinRequestAction(requestId: string, leagueId: string) {
+  const session = await requireSession();
+  await assertAdmin(session.memberUserId);
+
+  const request = await db.fantasyJoinRequest.findUnique({ where: { id: requestId } });
+  if (!request) return;
+
+  await db.fantasyJoinRequest.update({ where: { id: requestId }, data: { status: "rejected" } });
+
+  await auditLog(session.memberUserId, leagueId, "reject_join_request", "join_request", requestId, `Rejected: ${request.teamName}`);
+  revalidatePath(`/admin/leagues/${leagueId}`);
+}
+
+export async function toggleJoinRequestsAction(leagueId: string, open: boolean) {
+  const session = await requireSession();
+  await assertAdmin(session.memberUserId);
+
+  await db.fantasyLeague.update({ where: { id: leagueId }, data: { joinRequestsOpen: open } });
+
+  await auditLog(session.memberUserId, leagueId, "toggle_join_requests", "league", leagueId, open ? "Join requests OPENED" : "Join requests CLOSED");
+  revalidatePath(`/admin/leagues/${leagueId}`);
+  revalidatePath("/home");
 }
 
 export async function generateAwardsAction(

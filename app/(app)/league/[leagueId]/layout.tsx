@@ -1,7 +1,7 @@
 import { requireSession } from "@/app/lib/auth";
 import { db } from "@/app/lib/fantasy-db";
 import { getMainDb } from "@/app/lib/main-db";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { LeagueNav } from "./league-nav";
 
 export default async function LeagueLayout({
@@ -26,6 +26,19 @@ export default async function LeagueLayout({
     [session.memberUserId]
   );
   const user = userRes.rows[0];
+  const isAdmin = user?.role === "owner" || user?.role === "admin";
+
+  if (!isAdmin) {
+    const fantasyUser = await db.fantasyUser.findUnique({
+      where: { memberUserId: session.memberUserId },
+    });
+    const team = fantasyUser
+      ? await db.fantasyTeam.findUnique({
+          where: { fantasyUserId_leagueId: { fantasyUserId: fantasyUser.id, leagueId } },
+        })
+      : null;
+    if (!team) redirect("/home");
+  }
 
   return (
     <div className="min-h-screen flex flex-col">

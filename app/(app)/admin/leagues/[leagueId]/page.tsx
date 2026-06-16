@@ -10,7 +10,7 @@ import { PushGameButton } from "./push-game-button";
 import { SetPlayerPriceForm } from "./set-player-price-form";
 import { SetPlayerStatusForm } from "./set-player-status-form";
 import { GenerateAwardsButton } from "./generate-awards-button";
-import { updateLeagueStatusAction, toggleTransferWindowAction, toggleDoublePointsAction, updateLeagueSettingsAction } from "./actions";
+import { updateLeagueStatusAction, toggleTransferWindowAction, toggleDoublePointsAction, updateLeagueSettingsAction, approveJoinRequestAction, rejectJoinRequestAction, toggleJoinRequestsAction } from "./actions";
 
 type GameRow = {
   id: string;
@@ -114,6 +114,23 @@ export default async function LeagueAdminPage({
       [auditUserIds]
     );
     auditUsers = res.rows;
+  }
+
+  // Join requests
+  const joinRequests = await db.fantasyJoinRequest.findMany({
+    where: { leagueId },
+    orderBy: { createdAt: "asc" },
+  });
+  const requestMemberIds = [...new Set(joinRequests.map((r) => r.memberUserId))];
+  let requestMembers: { id: string; name: string }[] = [];
+  if (requestMemberIds.length > 0) {
+    const res = await pool.query<{ id: string; name: string }>(
+      `SELECT u.id, COALESCE(p.display_name, u.email) as name
+       FROM users u LEFT JOIN players p ON p.id = u.player_id
+       WHERE u.id = ANY($1::uuid[])`,
+      [requestMemberIds]
+    );
+    requestMembers = res.rows;
   }
 
   const totalManagers = await db.fantasyTeam.count({ where: { leagueId } });
@@ -268,6 +285,80 @@ export default async function LeagueAdminPage({
               </button>
             </form>
           </div>
+        </div>
+
+        {/* Join requests */}
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between flex-wrap gap-3">
+            <div>
+              <h2 className="font-semibold text-slate-800">Join Requests</h2>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Approve requests to create a team for that manager. Close requests to stop new applications.
+              </p>
+            </div>
+            <form action={async () => {
+              "use server";
+              await toggleJoinRequestsAction(leagueId, !league.joinRequestsOpen);
+            }}>
+              <button
+                type="submit"
+                className={`text-sm rounded-lg px-4 py-2 font-medium transition-colors ${
+                  league.joinRequestsOpen
+                    ? "bg-red-600 text-white hover:bg-red-700"
+                    : "bg-green-600 text-white hover:bg-green-700"
+                }`}
+              >
+                {league.joinRequestsOpen ? "Close Applications" : "Open Applications"}
+              </button>
+            </form>
+          </div>
+
+          {joinRequests.length === 0 ? (
+            <p className="text-center py-8 text-slate-400 text-sm">No join requests yet.</p>
+          ) : (
+            <div className="divide-y divide-slate-100">
+              {joinRequests.map((req) => {
+                const member = requestMembers.find((m) => m.id === req.memberUserId);
+                return (
+                  <div key={req.id} className="px-5 py-3 flex items-center justify-between gap-4">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-slate-800 truncate">{req.teamName}</p>
+                      <p className="text-xs text-slate-400">{member?.name ?? "Unknown"}</p>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+                        req.status === "pending" ? "bg-amber-100 text-amber-700"
+                        : req.status === "approved" ? "bg-green-100 text-green-700"
+                        : "bg-red-100 text-red-600"
+                      }`}>
+                        {req.status}
+                      </span>
+                      {req.status !== "approved" && (
+                        <form action={async () => {
+                          "use server";
+                          await approveJoinRequestAction(req.id, leagueId);
+                        }}>
+                          <button type="submit" className="text-xs rounded-lg bg-green-600 text-white px-3 py-1.5 font-medium hover:bg-green-700 transition-colors">
+                            Approve
+                          </button>
+                        </form>
+                      )}
+                      {req.status === "pending" && (
+                        <form action={async () => {
+                          "use server";
+                          await rejectJoinRequestAction(req.id, leagueId);
+                        }}>
+                          <button type="submit" className="text-xs rounded-lg border border-red-300 text-red-600 px-3 py-1.5 font-medium hover:bg-red-50 transition-colors">
+                            Reject
+                          </button>
+                        </form>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {/* League settings */}

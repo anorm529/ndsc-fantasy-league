@@ -1,8 +1,10 @@
+import Image from "next/image";
 import { requireSession } from "@/app/lib/auth";
 import { db } from "@/app/lib/fantasy-db";
 import { getMainDb } from "@/app/lib/main-db";
 import { logoutAction } from "@/app/lib/actions";
 import Link from "next/link";
+import { JoinRequestForm } from "./join-request-form";
 
 export const dynamic = 'force-dynamic';
 export const metadata = { title: "NDSC Fantasy — Select League" };
@@ -38,7 +40,6 @@ export default async function HomePage() {
     orderBy: { createdAt: "desc" },
   });
 
-  // Per-league: find this user's team (for rank/points display)
   const fantasyUser = await db.fantasyUser.findUnique({
     where: { memberUserId: session.memberUserId },
     include: { teams: true },
@@ -47,16 +48,25 @@ export default async function HomePage() {
     (fantasyUser?.teams ?? []).map((t) => [t.leagueId, t])
   );
 
+  // Load this user's join requests across all leagues
+  const joinRequests = await db.fantasyJoinRequest.findMany({
+    where: { memberUserId: session.memberUserId },
+  });
+  const requestsByLeague = new Map(joinRequests.map((r) => [r.leagueId, r]));
+
   return (
     <div className="min-h-screen flex flex-col">
-      {/* Minimal header */}
       <header className="bg-ndsc-navy shadow-lg">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
             <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-full bg-ndsc-gold flex items-center justify-center flex-shrink-0">
-                <span className="text-sm font-black text-ndsc-navy">N</span>
-              </div>
+              <Image
+                src="/fantasy-logo.png"
+                alt="NDSC Fantasy"
+                width={36}
+                height={36}
+                className="flex-shrink-0"
+              />
               <span className="text-white font-bold text-lg leading-none hidden sm:block">
                 NDSC Fantasy
               </span>
@@ -110,55 +120,122 @@ export default async function HomePage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
             {leagues.map((league) => {
               const myTeam = teamsByLeague.get(league.id);
-              return (
-                <Link
-                  key={league.id}
-                  href={`/league/${league.id}/dashboard`}
-                  className="group bg-white rounded-2xl border border-slate-200 shadow-sm hover:shadow-md hover:border-ndsc-navy/30 transition-all p-6 flex flex-col gap-4"
-                >
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <h2 className="text-lg font-bold text-slate-900 group-hover:text-ndsc-navy transition-colors">
-                        {league.name}
-                      </h2>
-                    </div>
-                    <span
-                      className={`text-xs font-semibold px-2.5 py-1 rounded-full ${STATUS_COLOUR[league.status] ?? STATUS_COLOUR.draft}`}
-                    >
-                      {STATUS_LABEL[league.status] ?? league.status}
-                    </span>
-                  </div>
+              const joinRequest = requestsByLeague.get(league.id);
+              const isClosed = league.status === "closed";
 
-                  {myTeam ? (
+              // User has a team — standard linked card
+              if (myTeam) {
+                return (
+                  <Link
+                    key={league.id}
+                    href={`/league/${league.id}/dashboard`}
+                    className="group bg-white rounded-2xl border border-slate-200 shadow-sm hover:shadow-md hover:border-ndsc-navy/30 transition-all p-6 flex flex-col gap-4"
+                  >
+                    <CardHeader league={league} />
                     <div className="flex gap-6 text-sm">
-                      <div>
-                        <p className="text-slate-400 text-xs font-medium">Points</p>
-                        <p className="text-xl font-black text-ndsc-navy">{myTeam.totalPoints}</p>
-                      </div>
-                      <div>
-                        <p className="text-slate-400 text-xs font-medium">Rank</p>
-                        <p className="text-xl font-black text-ndsc-navy">
-                          {myTeam.overallRank != null ? `#${myTeam.overallRank}` : "—"}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-slate-400 text-xs font-medium">Budget</p>
-                        <p className="text-xl font-black text-ndsc-navy">
-                          £{Number(myTeam.currentBudget).toFixed(1)}M
-                        </p>
-                      </div>
+                      <Stat label="Points" value={String(myTeam.totalPoints)} />
+                      <Stat
+                        label="Rank"
+                        value={myTeam.overallRank != null ? `#${myTeam.overallRank}` : "—"}
+                      />
+                      <Stat
+                        label="Budget"
+                        value={`£${Number(myTeam.currentBudget).toFixed(1)}M`}
+                      />
                     </div>
-                  ) : (
-                    <p className="text-sm text-slate-400">
-                      {league.status === "active" ? "Join and build your team →" : "Season not started yet"}
+                    {myTeam.teamName && (
+                      <p className="text-xs text-slate-400 -mt-2">{myTeam.teamName}</p>
+                    )}
+                  </Link>
+                );
+              }
+
+              // Closed league the user never joined — show info only
+              if (isClosed) {
+                return (
+                  <div
+                    key={league.id}
+                    className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 flex flex-col gap-4 opacity-60"
+                  >
+                    <CardHeader league={league} />
+                    <p className="text-sm text-slate-400">You did not participate in this season.</p>
+                  </div>
+                );
+              }
+
+              // Active league — show request state
+              return (
+                <div
+                  key={league.id}
+                  className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 flex flex-col gap-4"
+                >
+                  <CardHeader league={league} />
+
+                  {joinRequest?.status === "pending" && (
+                    <div className="space-y-1">
+                      <p className="text-sm font-semibold text-amber-700">
+                        Request pending approval
+                      </p>
+                      <p className="text-xs text-slate-400">
+                        Team name: <span className="font-medium text-slate-600">{joinRequest.teamName}</span>
+                      </p>
+                      <p className="text-xs text-slate-400">
+                        The league admin will review your request.
+                      </p>
+                    </div>
+                  )}
+
+                  {joinRequest?.status === "approved" && (
+                    <p className="text-sm text-ndsc-green font-medium">
+                      Approved — check back soon or contact the admin.
                     </p>
                   )}
-                </Link>
+
+                  {(joinRequest?.status === "rejected" || !joinRequest) && (
+                    <div className="space-y-2">
+                      {joinRequest?.status === "rejected" && (
+                        <p className="text-xs text-red-600 font-medium">
+                          Your previous request was not approved. You can request again below.
+                        </p>
+                      )}
+                      <JoinRequestForm
+                        leagueId={league.id}
+                        requestsOpen={league.joinRequestsOpen}
+                      />
+                    </div>
+                  )}
+                </div>
               );
             })}
           </div>
         )}
       </main>
+    </div>
+  );
+}
+
+function CardHeader({
+  league,
+}: {
+  league: { name: string; status: string };
+}) {
+  return (
+    <div className="flex items-start justify-between">
+      <h2 className="text-lg font-bold text-slate-900">{league.name}</h2>
+      <span
+        className={`text-xs font-semibold px-2.5 py-1 rounded-full flex-shrink-0 ${STATUS_COLOUR[league.status] ?? STATUS_COLOUR.draft}`}
+      >
+        {STATUS_LABEL[league.status] ?? league.status}
+      </span>
+    </div>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-slate-400 text-xs font-medium">{label}</p>
+      <p className="text-xl font-black text-ndsc-navy">{value}</p>
     </div>
   );
 }
