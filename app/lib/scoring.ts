@@ -63,6 +63,9 @@ export async function processGame(
 ): Promise<ProcessGameResult> {
   const pool = getMainDb();
 
+  const league = await db.fantasyLeague.findUnique({ where: { id: leagueId }, select: { doublePointsActive: true } });
+  const doublePoints = league?.doublePointsActive ?? false;
+
   const gameRes = await pool.query<{ id: string; result: string | null }>(
     "SELECT id::text, result FROM games WHERE id = $1",
     [gameId]
@@ -98,7 +101,7 @@ export async function processGame(
     const batting   = calcBattingPoints(row);
     const defence   = calcDefencePoints(row);
     const resultPts = calcResultPoints(game.result);
-    const total = batting + defence + resultPts;
+    const total = (batting + defence + resultPts) * (doublePoints ? 2 : 1);
 
     await db.fantasyScore.upsert({
       where: { playerId_processedGameId: { playerId: row.player_id, processedGameId: pg.id } },

@@ -53,6 +53,41 @@ export async function toggleTransferWindowAction(leagueId: string, open: boolean
   revalidatePath(`/league/${leagueId}/players`);
 }
 
+export async function toggleDoublePointsAction(leagueId: string, active: boolean) {
+  const session = await requireSession();
+  await assertAdmin(session.memberUserId);
+
+  await db.fantasyLeague.update({ where: { id: leagueId }, data: { doublePointsActive: active } });
+  await auditLog(session.memberUserId, leagueId, "toggle_double_points", "league", leagueId, active ? "Double points ENABLED" : "Double points DISABLED");
+  revalidatePath(`/admin/leagues/${leagueId}`);
+  revalidatePath(`/league/${leagueId}/dashboard`);
+}
+
+export async function updateLeagueSettingsAction(leagueId: string, formData: FormData) {
+  const session = await requireSession();
+  await assertAdmin(session.memberUserId);
+
+  const squadSize = parseInt(formData.get("squad_size")?.toString() ?? "7");
+  const startingBudget = parseFloat(formData.get("starting_budget")?.toString() ?? "50");
+  const maxPlayersPerTeam = parseInt(formData.get("max_players_per_team")?.toString() ?? "3");
+  const windowClosesAtRaw = formData.get("window_closes_at")?.toString();
+  const windowClosesAt = windowClosesAtRaw ? new Date(windowClosesAtRaw) : null;
+
+  if (isNaN(squadSize) || isNaN(startingBudget) || isNaN(maxPlayersPerTeam)) return;
+
+  await db.fantasyLeague.update({
+    where: { id: leagueId },
+    data: { squadSize, startingBudget, maxPlayersPerTeam, windowClosesAt },
+  });
+
+  await auditLog(session.memberUserId, leagueId, "update_league_settings", "league", leagueId,
+    `Squad: ${squadSize}, Budget: £${startingBudget}M, Max/team: ${maxPlayersPerTeam}, Window closes: ${windowClosesAt?.toISOString() ?? "none"}`
+  );
+
+  revalidatePath(`/admin/leagues/${leagueId}`);
+  revalidatePath(`/league/${leagueId}/players`);
+}
+
 export async function generatePricesAction(
   leagueId: string
 ): Promise<{ error?: string; count?: number }> {

@@ -37,7 +37,7 @@ export default async function MyTeamPage({
 
   if (!team) {
     team = await db.fantasyTeam.create({
-      data: { fantasyUserId: fantasyUser.id, leagueId, currentBudget: 40.0 },
+      data: { fantasyUserId: fantasyUser.id, leagueId, currentBudget: Number(league.startingBudget) },
       include: { roster: true },
     });
   }

@@ -31,7 +31,9 @@ export default async function PlayersPage({
   const league = await db.fantasyLeague.findUnique({ where: { id: leagueId } });
   if (!league) notFound();
 
-  const transferWindowOpen = league.transferWindowOpen;
+  const windowClosed = !league.transferWindowOpen ||
+    (league.windowClosesAt != null && new Date() >= league.windowClosesAt);
+  const squadSize = league.squadSize ?? 7;
 
   const seasonId = league.mainSeasonId;
 
@@ -103,7 +105,7 @@ export default async function PlayersPage({
 
   const rosterIds = new Set(fantasyTeam?.roster.map((r) => r.playerId) ?? []);
   const budget = Number(fantasyTeam?.currentBudget ?? 50.0);
-  const squadFull = (fantasyTeam?.roster.length ?? 0) >= 7;
+  const squadFull = (fantasyTeam?.roster.length ?? 0) >= squadSize;
 
   // Weekly transfer count (for extra transfer warning)
   let thisWeekTransfers = 0;
@@ -161,7 +163,7 @@ export default async function PlayersPage({
       </div>
 
       {/* Transfer window closed banner */}
-      {!transferWindowOpen && (
+      {windowClosed && (
         <div className="rounded-xl border border-red-300 bg-red-50 p-4">
           <p className="text-sm font-semibold text-red-800">Transfer window is closed</p>
           <p className="text-xs text-red-600 mt-0.5">
@@ -248,7 +250,7 @@ export default async function PlayersPage({
             )}
           </span>
           <span>
-            <strong className="text-ndsc-navy">Squad:</strong> {fantasyTeam.roster.length}/7 players
+            <strong className="text-ndsc-navy">Squad:</strong> {fantasyTeam.roster.length}/{squadSize} players
           </span>
           <span>
             <strong className="text-ndsc-navy">Free transfers:</strong>{" "}
@@ -369,9 +371,9 @@ export default async function PlayersPage({
                           playerId={p.id}
                           playerName={p.display_name}
                           price={meta.currentPrice}
-                          disabled={!transferWindowOpen || !canAfford || !fantasyTeam}
+                          disabled={windowClosed || !canAfford || !fantasyTeam}
                           disabledReason={
-                            !transferWindowOpen ? "Transfer window closed"
+                            windowClosed ? "Transfer window closed"
                             : !fantasyTeam ? "Create team first"
                             : !canAfford ? "Insufficient budget"
                             : undefined
@@ -387,9 +389,9 @@ export default async function PlayersPage({
                           playerId={p.id}
                           playerName={p.display_name}
                           price={meta.currentPrice}
-                          disabled={!transferWindowOpen || squadFull || !canAfford || !fantasyTeam}
+                          disabled={windowClosed || squadFull || !canAfford || !fantasyTeam}
                           disabledReason={
-                            !transferWindowOpen ? "Transfer window closed"
+                            windowClosed ? "Transfer window closed"
                             : !fantasyTeam ? "Create team first"
                             : squadFull ? "Squad full — use Transfer from My Team"
                             : !canAfford ? "Insufficient budget"

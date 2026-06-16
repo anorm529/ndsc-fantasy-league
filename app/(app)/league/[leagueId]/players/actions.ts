@@ -17,7 +17,9 @@ export async function signPlayerAction(
   await requireSession();
 
   const league = await db.fantasyLeague.findUnique({ where: { id: leagueId } });
-  if (!league?.transferWindowOpen) return { error: "Transfer window is currently closed" };
+  const windowClosed = !league?.transferWindowOpen ||
+    (league.windowClosesAt != null && new Date() >= league.windowClosesAt);
+  if (windowClosed) return { error: "Transfer window is currently closed" };
 
   const team = await db.fantasyTeam.findUnique({
     where: { id: teamId },
@@ -25,7 +27,7 @@ export async function signPlayerAction(
   });
 
   if (!team) return { error: "Team not found" };
-  if (team.roster.length >= 7) return { error: "Squad is full (max 7 players)" };
+  if (team.roster.length >= (league.squadSize ?? 7)) return { error: `Squad is full (max ${league.squadSize ?? 7} players)` };
   if (Number(team.currentBudget) < price) return { error: "Insufficient budget" };
 
   const already = team.roster.find((r) => r.playerId === playerId);
@@ -45,8 +47,8 @@ export async function signPlayerAction(
   );
 
   const sameTeamCount = parseInt(teamCheckRes.rows[0]?.count ?? "0");
-  if (sameTeamCount >= 2) {
-    return { error: "Maximum 2 players from the same NDSC team" };
+  if (sameTeamCount >= (league.maxPlayersPerTeam ?? 3)) {
+    return { error: `Maximum ${league.maxPlayersPerTeam ?? 3} players from the same NDSC team` };
   }
 
   await db.$transaction([
@@ -75,7 +77,9 @@ export async function transferPlayerAction(
   await requireSession();
 
   const league = await db.fantasyLeague.findUnique({ where: { id: leagueId } });
-  if (!league?.transferWindowOpen) return { error: "Transfer window is currently closed" };
+  const windowClosed = !league?.transferWindowOpen ||
+    (league.windowClosesAt != null && new Date() >= league.windowClosesAt);
+  if (windowClosed) return { error: "Transfer window is currently closed" };
 
   const team = await db.fantasyTeam.findUnique({
     where: { id: teamId },
@@ -111,8 +115,8 @@ export async function transferPlayerAction(
       [playerInId, remainingPlayerIds]
     );
     const sameTeamCount = parseInt(teamCheckRes.rows[0]?.count ?? "0");
-    if (sameTeamCount >= 2) {
-      return { error: "Maximum 2 players from the same NDSC team" };
+    if (sameTeamCount >= (league.maxPlayersPerTeam ?? 3)) {
+      return { error: `Maximum ${league.maxPlayersPerTeam ?? 3} players from the same NDSC team` };
     }
   }
 

@@ -92,6 +92,16 @@ export default async function DashboardPage({
 
   return (
     <div className="space-y-6">
+      {league.doublePointsActive && (
+        <div className="rounded-xl border border-ndsc-gold bg-ndsc-gold/10 px-5 py-4 flex items-center gap-3">
+          <span className="text-2xl">⚡</span>
+          <div>
+            <p className="font-bold text-amber-800">Double Points Week!</p>
+            <p className="text-xs text-amber-700 mt-0.5">All fantasy points scored from games pushed this week are doubled. Pick your captain wisely.</p>
+          </div>
+        </div>
+      )}
+
       <div>
         <h1 className="text-2xl font-bold text-slate-900">{league.name}</h1>
         <p className="text-slate-500 text-sm mt-0.5">
@@ -114,7 +124,7 @@ export default async function DashboardPage({
         />
         <StatCard
           label="Squad"
-          value={fantasyTeam ? `${fantasyTeam.roster.length}/7` : "0/7"}
+          value={fantasyTeam ? `${fantasyTeam.roster.length}/${league.squadSize}` : `0/${league.squadSize}`}
           sub="players"
         />
         <StatCard
@@ -212,9 +222,9 @@ export default async function DashboardPage({
         <div className="px-5 pb-6 pt-2 space-y-6 text-sm text-slate-700 border-t border-slate-100">
 
           <RulesSection title="Squad">
-            <Rule label="7 players" detail="Build a squad of exactly 7 players" />
-            <Rule label="£50M budget" detail="Spend wisely — unspent budget doesn't carry over" />
-            <Rule label="Max 2 per team" detail="No more than 2 players from the same NDSC team" />
+            <Rule label={`${league.squadSize} players`} detail={`Build a squad of exactly ${league.squadSize} players`} />
+            <Rule label={`£${Number(league.startingBudget).toFixed(0)}M budget`} detail="Spend wisely — unspent budget doesn't carry over" />
+            <Rule label={`Max ${league.maxPlayersPerTeam} per team`} detail={`No more than ${league.maxPlayersPerTeam} players from the same NDSC team`} />
           </RulesSection>
 
           <RulesSection title="Scoring — per game">

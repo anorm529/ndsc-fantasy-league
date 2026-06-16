@@ -10,7 +10,7 @@ import { PushGameButton } from "./push-game-button";
 import { SetPlayerPriceForm } from "./set-player-price-form";
 import { SetPlayerStatusForm } from "./set-player-status-form";
 import { GenerateAwardsButton } from "./generate-awards-button";
-import { updateLeagueStatusAction, toggleTransferWindowAction } from "./actions";
+import { updateLeagueStatusAction, toggleTransferWindowAction, toggleDoublePointsAction, updateLeagueSettingsAction } from "./actions";
 
 type GameRow = {
   id: string;
@@ -212,7 +212,9 @@ export default async function LeagueAdminPage({
               </p>
               <p className={`text-xs mt-0.5 ${league.transferWindowOpen ? "text-green-600" : "text-red-600"}`}>
                 {league.transferWindowOpen
-                  ? "Managers can sign and transfer players."
+                  ? league.windowClosesAt
+                    ? `Auto-closes ${new Date(league.windowClosesAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}`
+                    : "Managers can sign and transfer players."
                   : "All transfers are currently blocked. Managers cannot sign or transfer players."}
               </p>
             </div>
@@ -232,6 +234,100 @@ export default async function LeagueAdminPage({
               </button>
             </form>
           </div>
+
+          {/* Double points toggle */}
+          <div className={`flex items-center justify-between rounded-lg px-4 py-3 border ${
+            league.doublePointsActive
+              ? "bg-ndsc-gold/10 border-ndsc-gold/40"
+              : "bg-slate-50 border-slate-200"
+          }`}>
+            <div>
+              <p className={`text-sm font-semibold ${league.doublePointsActive ? "text-amber-800" : "text-slate-700"}`}>
+                Double Points Week: {league.doublePointsActive ? "ACTIVE" : "OFF"}
+              </p>
+              <p className={`text-xs mt-0.5 ${league.doublePointsActive ? "text-amber-600" : "text-slate-400"}`}>
+                {league.doublePointsActive
+                  ? "All scores from pushed games are doubled. A banner shows on the manager dashboard."
+                  : "Enable before pushing games to double all fantasy points scored this week."}
+              </p>
+            </div>
+            <form action={async () => {
+              "use server";
+              await toggleDoublePointsAction(leagueId, !league.doublePointsActive);
+            }}>
+              <button
+                type="submit"
+                className={`text-sm rounded-lg px-4 py-2 font-medium transition-colors ${
+                  league.doublePointsActive
+                    ? "bg-slate-600 text-white hover:bg-slate-700"
+                    : "bg-ndsc-gold text-ndsc-navy hover:bg-yellow-400"
+                }`}
+              >
+                {league.doublePointsActive ? "Turn Off" : "Enable"}
+              </button>
+            </form>
+          </div>
+        </div>
+
+        {/* League settings */}
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+          <h2 className="font-semibold text-slate-800 mb-4">League Settings</h2>
+          <form action={updateLeagueSettingsAction.bind(null, leagueId)} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">Squad size</label>
+              <input
+                name="squad_size"
+                type="number"
+                min={1}
+                max={20}
+                defaultValue={league.squadSize}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ndsc-navy/20"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">Starting budget (£M)</label>
+              <input
+                name="starting_budget"
+                type="number"
+                min={1}
+                max={200}
+                step={0.5}
+                defaultValue={Number(league.startingBudget)}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ndsc-navy/20"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">Max players from same NDSC team</label>
+              <input
+                name="max_players_per_team"
+                type="number"
+                min={1}
+                max={10}
+                defaultValue={league.maxPlayersPerTeam}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ndsc-navy/20"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">Transfer window auto-closes at</label>
+              <input
+                name="window_closes_at"
+                type="datetime-local"
+                defaultValue={league.windowClosesAt
+                  ? new Date(league.windowClosesAt).toISOString().slice(0, 16)
+                  : ""}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ndsc-navy/20"
+              />
+              <p className="text-xs text-slate-400 mt-1">Leave blank for manual control only.</p>
+            </div>
+            <div className="sm:col-span-2">
+              <button
+                type="submit"
+                className="rounded-lg bg-ndsc-navy text-white px-5 py-2 text-sm font-medium hover:bg-slate-700 transition-colors"
+              >
+                Save Settings
+              </button>
+            </div>
+          </form>
         </div>
 
         {/* Stats strip */}
