@@ -14,6 +14,12 @@ type GameStatRow = {
   assisted_outs: number;
 };
 
+type PlayerInfo = {
+  id: string;
+  gender: string | null;
+  squad_status: string | null;
+};
+
 function calcBattingPoints(row: GameStatRow): number {
   return (
     (row.singles       || 0) * 1 +
@@ -36,10 +42,10 @@ function calcResultPoints(result: string | null): number {
   return 0;
 }
 
-function getWeekStart(): Date {
+export function getWeekStart(): Date {
   const now = new Date();
   const day = now.getDay(); // 0=Sun, 1=Mon
-  const daysBack = day === 0 ? 6 : day - 1; // back to Monday
+  const daysBack = day === 0 ? 6 : day - 1;
   const monday = new Date(now);
   monday.setDate(now.getDate() - daysBack);
   monday.setHours(0, 0, 0, 0);
@@ -184,22 +190,29 @@ async function calculatePriceMovements(
     let reason = "";
 
     if (expected === 0) {
-      delta = 0.2;
-      reason = "Debut/first game bonus";
+      delta = 0.5;
+      reason = "First game bonus";
+    } else if (actual >= expected * 2.0) {
+      delta = 2.0;
+      reason = `Exceptional: ${actual} pts vs avg ${Math.round(expected)}`;
     } else if (actual >= expected * 1.5) {
-      delta = 0.4;
+      delta = 1.0;
       reason = `Big rise: ${actual} pts vs avg ${Math.round(expected)}`;
     } else if (actual >= expected * 1.25) {
-      delta = 0.2;
+      delta = 0.5;
       reason = `Rise: ${actual} pts vs avg ${Math.round(expected)}`;
+    } else if (actual <= expected * 0.5) {
+      delta = -2.0;
+      reason = `Big fall: ${actual} pts vs avg ${Math.round(expected)}`;
     } else if (actual <= expected * 0.75) {
-      delta = -0.2;
+      delta = -1.0;
       reason = `Fall: ${actual} pts vs avg ${Math.round(expected)}`;
     }
 
     if (delta !== 0) {
-      const newPrice = Math.max(0.5, parseFloat((oldPrice + delta).toFixed(1)));
-      changes.push({ playerId: score.playerId, oldPrice, newPrice, changeAmount: delta, reason });
+      const rawNew = parseFloat((oldPrice + delta).toFixed(1));
+      const newPrice = Math.min(20.0, Math.max(0.5, rawNew));
+      changes.push({ playerId: score.playerId, oldPrice, newPrice, changeAmount: parseFloat((newPrice - oldPrice).toFixed(1)), reason });
     }
   }
 
@@ -213,7 +226,6 @@ async function applyPriceMovements(
 ): Promise<void> {
   if (changes.length === 0) return;
 
-  // Pre-fetch team IDs to avoid Prisma relation filter in updateMany
   const teams = await db.fantasyTeam.findMany({ where: { leagueId }, select: { id: true } });
   const teamIds = teams.map((t) => t.id);
 
@@ -309,7 +321,13 @@ async function snapshotTransferTrends(
   }
 }
 
-// --- Team points (optimised: 2 queries instead of N×M) ---
+// --- Team points ---
+//
+// Scoring rules:
+//  - Captain: 2× points
+//  - Rookie/development player: 2× points (stacks with captain → 4×)
+//  - Women majority bonus: if >50% of squad is female, +3 pts per game processed
+//  - Extra transfers: −15 pts each (1 free per Mon–Sun week)
 
 export async function updateFantasyTeamPoints(leagueId: string): Promise<void> {
   const teams = await db.fantasyTeam.findMany({
@@ -323,7 +341,6 @@ export async function updateFantasyTeamPoints(leagueId: string): Promise<void> {
   });
   const processedGameIds = processedGames.map((g) => g.id);
 
-  // Single query for all scores across all games in this league
   const allScores = processedGameIds.length > 0
     ? await db.fantasyScore.findMany({
         where: { processedGameId: { in: processedGameIds } },
@@ -336,7 +353,7 @@ export async function updateFantasyTeamPoints(leagueId: string): Promise<void> {
     playerTotals.set(s.playerId, (playerTotals.get(s.playerId) ?? 0) + s.fantasyPoints);
   }
 
-  // Weekly transfer penalty: 1 free per Mon–Sun week, extras cost 4 pts each
+  // Weekly transfer penalty: 1 free per Mon–Sun week, extras cost 15 pts each
   const weekStart = getWeekStart();
   const teamIds = teams.map((t) => t.id);
   const weeklyTransferGroups = teamIds.length > 0
@@ -350,18 +367,57 @@ export async function updateFantasyTeamPoints(leagueId: string): Promise<void> {
     weeklyTransferGroups.map((g) => [g.fantasyTeamId, g._count.fantasyTeamId])
   );
 
+  // Fetch player gender + squad_status from main DB for all rostered players
+  const pool = getMainDb();
+  const allPlayerIds = [...new Set(teams.flatMap((t) => t.roster.map((r) => r.playerId)))];
+  let playerInfoList: PlayerInfo[] = [];
+  if (allPlayerIds.length > 0) {
+    try {
+      const res = await pool.query<PlayerInfo>(`
+        SELECT p.id::text, p.gender, pts.squad_status
+        FROM players p
+        LEFT JOIN player_team_seasons pts
+          ON pts.player_id = p.id
+          AND pts.season_id = (SELECT id FROM seasons WHERE is_active = true LIMIT 1)
+        WHERE p.id = ANY($1::uuid[])
+      `, [allPlayerIds]);
+      playerInfoList = res.rows;
+    } catch {
+      // Non-fatal — rookie bonus and women bonus won't apply
+    }
+  }
+
+  const playerGenderMap = new Map(playerInfoList.map((p) => [p.id, p.gender]));
+  const playerStatusMap = new Map(playerInfoList.map((p) => [p.id, p.squad_status]));
+
   for (const team of teams) {
     const captainId = team.roster.find((r) => r.isCaptain)?.playerId;
-    let total = 0;
 
+    const femaleCount = team.roster.filter(
+      (r) => playerGenderMap.get(r.playerId) === "female"
+    ).length;
+    const hasFemaleBonus = team.roster.length > 0 && femaleCount > team.roster.length / 2;
+
+    let total = 0;
     for (const r of team.roster) {
-      const pts = playerTotals.get(r.playerId) ?? 0;
-      total += r.playerId === captainId ? pts * 2 : pts;
+      const rawPts = playerTotals.get(r.playerId) ?? 0;
+      const isRookie = ["rookie", "development"].includes(playerStatusMap.get(r.playerId) ?? "");
+      const isCaptain = r.playerId === captainId;
+
+      let pts = rawPts;
+      if (isRookie) pts *= 2;
+      if (isCaptain) pts *= 2;
+      total += pts;
     }
 
-    // Deduct 4 pts per extra transfer this calendar week
+    // Women majority bonus: +3 pts per game if >50% of squad is female
+    if (hasFemaleBonus) {
+      total += processedGameIds.length * 3;
+    }
+
+    // Extra transfer penalty
     const weeklyCount = weeklyCountMap.get(team.id) ?? 0;
-    const penalty = Math.max(0, weeklyCount - 1) * 4;
+    const penalty = Math.max(0, weeklyCount - 1) * 15;
     total = Math.max(0, total - penalty);
 
     await db.fantasyTeam.update({

@@ -4,8 +4,9 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/app/lib/fantasy-db";
 import { requireSession } from "@/app/lib/auth";
 import { getMainDb } from "@/app/lib/main-db";
+import { getWeekStart } from "@/app/lib/scoring";
 
-export type SignPlayerResult = { error?: string };
+export type SignPlayerResult = { error?: string; warning?: string };
 
 export async function signPlayerAction(
   teamId: string,
@@ -21,7 +22,7 @@ export async function signPlayerAction(
   });
 
   if (!team) return { error: "Team not found" };
-  if (team.roster.length >= 5) return { error: "Squad is full (max 5 players)" };
+  if (team.roster.length >= 7) return { error: "Squad is full (max 7 players)" };
   if (Number(team.currentBudget) < price) return { error: "Insufficient budget" };
 
   const already = team.roster.find((r) => r.playerId === playerId);
@@ -109,6 +110,14 @@ export async function transferPlayerAction(
     }
   }
 
+  // Count this week's transfers to determine if this is a free or paid transfer
+  const weekStart = getWeekStart();
+  const weeklyCount = await db.fantasyTransfer.count({
+    where: { fantasyTeamId: teamId, transferDate: { gte: weekStart } },
+  });
+  const isExtraTransfer = weeklyCount >= 1;
+  const transferCost = isExtraTransfer ? 15 : 0;
+
   await db.$transaction([
     db.fantasyRoster.delete({ where: { id: rosterOutId } }),
     db.fantasyRoster.create({
@@ -123,7 +132,7 @@ export async function transferPlayerAction(
         fantasyTeamId: teamId,
         playerOutId: rosterOut.playerId,
         playerInId,
-        transferCost: 0,
+        transferCost,
       },
     }),
   ]);
@@ -131,5 +140,7 @@ export async function transferPlayerAction(
   revalidatePath(`/league/${leagueId}/players`);
   revalidatePath(`/league/${leagueId}/my-team`);
 
-  return {};
+  return isExtraTransfer
+    ? { warning: `Transfer complete. −${transferCost} pts will be deducted at the next game push.` }
+    : {};
 }

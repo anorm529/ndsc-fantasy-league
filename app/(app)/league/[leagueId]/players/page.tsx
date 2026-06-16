@@ -3,6 +3,7 @@ import { db } from "@/app/lib/fantasy-db";
 import { getMainDb } from "@/app/lib/main-db";
 import { notFound } from "next/navigation";
 import { SignPlayerButton } from "./sign-player-button";
+import { getWeekStart } from "@/app/lib/scoring";
 
 export const metadata = { title: "Players — NDSC Fantasy" };
 
@@ -99,8 +100,17 @@ export default async function PlayersPage({
     : null;
 
   const rosterIds = new Set(fantasyTeam?.roster.map((r) => r.playerId) ?? []);
-  const budget = Number(fantasyTeam?.currentBudget ?? 40.0);
-  const squadFull = (fantasyTeam?.roster.length ?? 0) >= 5;
+  const budget = Number(fantasyTeam?.currentBudget ?? 50.0);
+  const squadFull = (fantasyTeam?.roster.length ?? 0) >= 7;
+
+  // Weekly transfer count (for extra transfer warning)
+  let thisWeekTransfers = 0;
+  if (fantasyTeam) {
+    const weekStart = getWeekStart();
+    thisWeekTransfers = await db.fantasyTransfer.count({
+      where: { fantasyTeamId: fantasyTeam.id, transferDate: { gte: weekStart } },
+    });
+  }
 
   // Transfer mode — look up the roster entry being replaced
   let rosterOutEntry: { id: string; playerId: string; currentPrice: number } | null = null;
@@ -158,6 +168,9 @@ export default async function PlayersPage({
             <p className="text-xs text-amber-600 mt-0.5">
               You will receive £{rosterOutEntry!.currentPrice.toFixed(1)}M back.
               Effective budget: £{effectiveBudget.toFixed(1)}M
+              {thisWeekTransfers >= 1 && (
+                <span className="ml-2 text-red-600 font-semibold">⚠️ Extra transfer — −15 pts</span>
+              )}
             </p>
           </div>
           <a
@@ -195,7 +208,6 @@ export default async function PlayersPage({
             <option key={t} value={t}>{t}</option>
           ))}
         </select>
-        {/* Preserve replacing param through filter form */}
         {replacing && <input type="hidden" name="replacing" value={replacing} />}
         <button
           type="submit"
@@ -214,7 +226,7 @@ export default async function PlayersPage({
       </form>
 
       {fantasyTeam && (
-        <div className="bg-ndsc-navy/5 border border-ndsc-navy/20 rounded-lg px-4 py-3 text-sm flex gap-6">
+        <div className="bg-ndsc-navy/5 border border-ndsc-navy/20 rounded-lg px-4 py-3 text-sm flex flex-wrap gap-x-6 gap-y-1">
           <span>
             <strong className="text-ndsc-navy">Budget:</strong>{" "}
             {isTransferMode ? (
@@ -224,13 +236,35 @@ export default async function PlayersPage({
             )}
           </span>
           <span>
-            <strong className="text-ndsc-navy">Squad:</strong> {fantasyTeam.roster.length}/5 players
+            <strong className="text-ndsc-navy">Squad:</strong> {fantasyTeam.roster.length}/7 players
+          </span>
+          <span>
+            <strong className="text-ndsc-navy">Free transfers:</strong>{" "}
+            {thisWeekTransfers === 0
+              ? "1 remaining this week"
+              : <span className="text-red-600">{thisWeekTransfers} used — extras cost −15 pts</span>}
           </span>
           {squadFull && !isTransferMode && (
             <span className="text-amber-600 font-medium">Squad full — use Transfer to swap</span>
           )}
         </div>
       )}
+
+      {/* Badge legend */}
+      <div className="flex flex-wrap gap-3 text-xs text-slate-500">
+        <span className="flex items-center gap-1">
+          <span className="bg-ndsc-green text-white px-1.5 py-0.5 rounded font-bold">ROOKIE</span>
+          2× points multiplier
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="bg-purple-600 text-white px-1.5 py-0.5 rounded font-bold">DIFF</span>
+          Differential — owned by &lt;20% of managers
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="bg-pink-500 text-white px-1.5 py-0.5 rounded font-bold">F</span>
+          Female — build &gt;50% female squad for +3 pts/game bonus
+        </span>
+      </div>
 
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
@@ -239,7 +273,6 @@ export default async function PlayersPage({
               <tr className="border-b border-slate-100 bg-slate-50">
                 <th className="text-left px-5 py-3 font-medium text-slate-500">Player</th>
                 <th className="text-left px-3 py-3 font-medium text-slate-500">Team</th>
-                <th className="text-left px-3 py-3 font-medium text-slate-500">Gender</th>
                 <th className="text-right px-3 py-3 font-medium text-slate-500">Price</th>
                 <th className="text-right px-3 py-3 font-medium text-slate-500">Rating</th>
                 <th className="text-right px-3 py-3 font-medium text-slate-500">Owned</th>
@@ -249,7 +282,7 @@ export default async function PlayersPage({
             <tbody className="divide-y divide-slate-100">
               {players.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="text-center py-10 text-slate-400">
+                  <td colSpan={6} className="text-center py-10 text-slate-400">
                     No players found
                   </td>
                 </tr>
@@ -262,27 +295,45 @@ export default async function PlayersPage({
                   ? meta.currentPrice <= effectiveBudget
                   : meta.currentPrice <= budget;
                 const isRookie = p.squad_status === "rookie" || p.squad_status === "development";
+                const isFemale = p.gender?.toLowerCase() === "female";
+                const ownership = ownershipMap.get(p.id) ?? 0;
+                const isDifferential = totalTeams > 1 && ownership < 20;
 
                 return (
                   <tr
                     key={p.id}
-                    className={`hover:bg-slate-50 transition-colors ${isBeingReplaced ? "opacity-40" : ""}`}
+                    className={`hover:bg-slate-50 transition-colors ${isBeingReplaced ? "opacity-40" : ""} ${isRookie ? "bg-ndsc-green/5" : ""}`}
                   >
                     <td className="px-5 py-3">
                       <div className="flex items-center gap-2.5">
-                        <div className="w-8 h-8 rounded-full bg-ndsc-navy/10 text-ndsc-navy font-bold text-xs flex items-center justify-center flex-shrink-0">
+                        <div className={`w-8 h-8 rounded-full font-bold text-xs flex items-center justify-center flex-shrink-0 ${
+                          isFemale ? "bg-pink-100 text-pink-700" : "bg-ndsc-navy/10 text-ndsc-navy"
+                        }`}>
                           {p.display_name[0]}
                         </div>
                         <div>
                           <p className="font-medium text-slate-800">{p.display_name}</p>
-                          {isRookie && (
-                            <span className="text-xs text-ndsc-green font-medium">Rookie</span>
-                          )}
+                          <div className="flex items-center gap-1 mt-0.5 flex-wrap">
+                            {isRookie && (
+                              <span className="bg-ndsc-green text-white text-xs px-1.5 py-0.5 rounded font-bold leading-none">
+                                ROOKIE 2×
+                              </span>
+                            )}
+                            {isDifferential && (
+                              <span className="bg-purple-600 text-white text-xs px-1.5 py-0.5 rounded font-bold leading-none">
+                                DIFF
+                              </span>
+                            )}
+                            {isFemale && (
+                              <span className="bg-pink-500 text-white text-xs px-1.5 py-0.5 rounded font-bold leading-none">
+                                F
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </td>
                     <td className="px-3 py-3 text-slate-500">{p.team_name ?? "—"}</td>
-                    <td className="px-3 py-3 text-slate-500 capitalize">{p.gender ?? "—"}</td>
                     <td className="px-3 py-3 text-right font-bold text-slate-800">
                       £{meta.currentPrice.toFixed(1)}M
                     </td>
@@ -292,7 +343,7 @@ export default async function PlayersPage({
                       </span>
                     </td>
                     <td className="px-3 py-3 text-right text-slate-500">
-                      {ownershipMap.get(p.id) ?? 0}%
+                      {ownership}%
                     </td>
                     <td className="px-5 py-3 text-right">
                       {isBeingReplaced ? (
@@ -316,6 +367,7 @@ export default async function PlayersPage({
                           leagueId={leagueId}
                           replacingRosterId={rosterOutEntry!.id}
                           replacingPlayerName={rosterOutPlayerName ?? undefined}
+                          isExtraTransfer={thisWeekTransfers >= 1}
                         />
                       ) : (
                         <SignPlayerButton

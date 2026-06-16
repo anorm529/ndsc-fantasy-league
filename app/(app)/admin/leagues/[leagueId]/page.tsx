@@ -119,6 +119,15 @@ export default async function LeagueAdminPage({
   const pricedPlayers = playerMetas.length;
   const pushedCount = pushedGames.length;
 
+  const ownershipGroups = await db.fantasyRoster.groupBy({
+    by: ["playerId"],
+    where: { team: { leagueId } },
+    _count: { playerId: true },
+  });
+  const ownershipMap = new Map(
+    ownershipGroups.map((o) => [o.playerId, o._count.playerId])
+  );
+
   const prevSeasonRes = league.prevSeasonId
     ? await pool.query<{ year: number }>("SELECT year FROM seasons WHERE id = $1", [league.prevSeasonId])
     : null;
@@ -210,6 +219,63 @@ export default async function LeagueAdminPage({
           </div>
           <GeneratePricesButton leagueId={leagueId} hasPrevSeason={!!league.prevSeasonId} />
         </div>
+
+        {/* Pricing breakdown */}
+        {playerMetas.length > 0 && (
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="px-5 py-4 border-b border-slate-100">
+              <h2 className="font-semibold text-slate-800">Player Pricing Breakdown</h2>
+              <p className="text-xs text-slate-400 mt-0.5">All priced players sorted by Fantasy Rating. Ownership is current squad count.</p>
+            </div>
+            <div className="overflow-x-auto max-h-96 overflow-y-auto">
+              <table className="w-full text-xs">
+                <thead className="sticky top-0 bg-slate-50 z-10">
+                  <tr className="border-b border-slate-100">
+                    <th className="text-left px-5 py-2.5 font-medium text-slate-500">#</th>
+                    <th className="text-left px-3 py-2.5 font-medium text-slate-500">Player</th>
+                    <th className="text-left px-3 py-2.5 font-medium text-slate-500">Gender</th>
+                    <th className="text-right px-3 py-2.5 font-medium text-slate-500">FR</th>
+                    <th className="text-right px-3 py-2.5 font-medium text-slate-500">Price</th>
+                    <th className="text-right px-3 py-2.5 font-medium text-slate-500">Owners</th>
+                    <th className="text-right px-5 py-2.5 font-medium text-slate-500">Own %</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {[...allPlayers.rows]
+                    .filter((p) => metaMap.has(p.id))
+                    .sort((a, b) => (metaMap.get(b.id)?.fantasyRating ?? 0) - (metaMap.get(a.id)?.fantasyRating ?? 0))
+                    .map((p, i) => {
+                      const meta = metaMap.get(p.id)!;
+                      const owners = ownershipMap.get(p.id) ?? 0;
+                      const ownPct = totalManagers > 0 ? Math.round((owners / totalManagers) * 100) : 0;
+                      const fr = meta.fantasyRating;
+                      return (
+                        <tr key={p.id} className="hover:bg-slate-50">
+                          <td className="px-5 py-2 text-slate-400">{i + 1}</td>
+                          <td className="px-3 py-2 font-medium text-slate-800">{p.display_name}</td>
+                          <td className="px-3 py-2 text-slate-500 capitalize">{p.gender ?? "—"}</td>
+                          <td className="px-3 py-2 text-right">
+                            <span className={`font-bold ${fr >= 70 ? "text-green-600" : fr >= 50 ? "text-amber-500" : "text-red-500"}`}>
+                              {fr}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2 text-right font-semibold text-slate-800">
+                            £{Number(meta.currentPrice).toFixed(1)}M
+                          </td>
+                          <td className="px-3 py-2 text-right text-slate-600">{owners}</td>
+                          <td className="px-5 py-2 text-right">
+                            <span className={`font-medium ${ownPct >= 50 ? "text-amber-600" : ownPct < 20 && totalManagers > 1 ? "text-purple-600" : "text-slate-500"}`}>
+                              {ownPct}%
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
 
         {/* Games panel */}
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">

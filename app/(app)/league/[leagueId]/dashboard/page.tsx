@@ -202,6 +202,69 @@ export default async function DashboardPage({
           </div>
         </div>
       </div>
+
+      {/* Rules & incentives */}
+      <details className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden group">
+        <summary className="px-5 py-4 cursor-pointer flex items-center justify-between font-semibold text-slate-800 select-none hover:bg-slate-50 transition-colors">
+          <span>Rules & Scoring Guide</span>
+          <span className="text-slate-400 text-sm group-open:rotate-180 transition-transform">▼</span>
+        </summary>
+        <div className="px-5 pb-6 pt-2 space-y-6 text-sm text-slate-700 border-t border-slate-100">
+
+          <RulesSection title="Squad">
+            <Rule label="7 players" detail="Build a squad of exactly 7 players" />
+            <Rule label="£50M budget" detail="Spend wisely — unspent budget doesn't carry over" />
+            <Rule label="Max 2 per team" detail="No more than 2 players from the same NDSC team" />
+          </RulesSection>
+
+          <RulesSection title="Scoring — per game">
+            <Rule label="Single" detail="+1 pt" />
+            <Rule label="Double" detail="+2 pts" />
+            <Rule label="Triple" detail="+3 pts" />
+            <Rule label="Home run" detail="+5 pts" />
+            <Rule label="RBI / Run scored / Walk" detail="+1 pt each" />
+            <Rule label="Defensive out (unassisted or assisted)" detail="+1 pt each" />
+            <Rule label="Win" detail="+3 pts &nbsp;·&nbsp; Draw +1 pt &nbsp;·&nbsp; Loss 0 pts" />
+          </RulesSection>
+
+          <RulesSection title="Multipliers & Bonuses">
+            <Rule
+              label="Captain (2×)"
+              detail="Your captain scores double points for every game. Choose wisely each week from My Team."
+              highlight
+            />
+            <Rule
+              label="Rookie / Development player (2×)"
+              detail="Any player with rookie or development squad status scores double points automatically. Look for the green ROOKIE badge."
+              highlight
+            />
+            <Rule
+              label="Women majority bonus (+3 pts / game)"
+              detail="If more than half your squad (4+ of 7) are female players, your whole team earns +3 bonus points for every game pushed. Look for the pink F badge."
+              highlight
+            />
+            <Rule
+              label="Differential pick"
+              detail="Players owned by fewer than 20% of managers show a purple DIFF badge. No point bonus — but a surprise big game from a differential can swing the standings."
+            />
+          </RulesSection>
+
+          <RulesSection title="Transfers">
+            <Rule label="1 free transfer per week" detail="The transfer window resets every Monday at midnight." />
+            <Rule
+              label="Extra transfers cost −15 pts"
+              detail="You can make as many transfers as you like, but each one beyond the first this week deducts 15 points at the next game push."
+            />
+          </RulesSection>
+
+          <RulesSection title="Prices">
+            <Rule label="Set at season start" detail="Prices are calculated from last season's end-of-season stats using OPS, OBP, AVG, defensive outs, and availability." />
+            <Rule label="Rise / fall each game" detail="A player who outperforms their rolling 5-game average rises up to +£2M. Underperformers fall up to −£2M." />
+            <Rule label="Price range" detail="£0.5M minimum · £20M maximum" />
+          </RulesSection>
+
+        </div>
+      </details>
     </div>
   );
 }
@@ -225,5 +288,23 @@ function QuickLink({ href, label }: { href: string; label: string }) {
       <span>{label}</span>
       <span>→</span>
     </Link>
+  );
+}
+
+function RulesSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <h3 className="text-xs font-bold uppercase tracking-widest text-ndsc-navy mb-3">{title}</h3>
+      <div className="space-y-2">{children}</div>
+    </div>
+  );
+}
+
+function Rule({ label, detail, highlight }: { label: string; detail: string; highlight?: boolean }) {
+  return (
+    <div className={`flex gap-3 rounded-lg px-3 py-2 ${highlight ? "bg-ndsc-gold/10 border border-ndsc-gold/30" : "bg-slate-50"}`}>
+      <span className={`font-semibold whitespace-nowrap ${highlight ? "text-amber-700" : "text-slate-700"}`}>{label}</span>
+      <span className="text-slate-500">{detail}</span>
+    </div>
   );
 }
