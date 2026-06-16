@@ -92,16 +92,25 @@ export default async function PlayersPage({
     }
   }
 
-  const fantasyUser = await db.fantasyUser.findUnique({
+  let fantasyUser = await db.fantasyUser.findUnique({
     where: { memberUserId: session.memberUserId },
   });
+  if (!fantasyUser) {
+    fantasyUser = await db.fantasyUser.create({
+      data: { memberUserId: session.memberUserId, teamName: "My Fantasy Team" },
+    });
+  }
 
-  const fantasyTeam = fantasyUser
-    ? await db.fantasyTeam.findUnique({
-        where: { fantasyUserId_leagueId: { fantasyUserId: fantasyUser.id, leagueId } },
-        include: { roster: true },
-      })
-    : null;
+  let fantasyTeam = await db.fantasyTeam.findUnique({
+    where: { fantasyUserId_leagueId: { fantasyUserId: fantasyUser.id, leagueId } },
+    include: { roster: true },
+  });
+  if (!fantasyTeam) {
+    fantasyTeam = await db.fantasyTeam.create({
+      data: { fantasyUserId: fantasyUser.id, leagueId, currentBudget: Number(league.startingBudget) },
+      include: { roster: true },
+    });
+  }
 
   const rosterIds = new Set(fantasyTeam?.roster.map((r) => r.playerId) ?? []);
   const budget = Number(fantasyTeam?.currentBudget ?? 50.0);
