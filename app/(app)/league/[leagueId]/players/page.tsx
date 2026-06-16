@@ -297,7 +297,7 @@ export default async function PlayersPage({
                 const isRookie = p.squad_status === "rookie" || p.squad_status === "development";
                 const isFemale = p.gender?.toLowerCase() === "female";
                 const ownership = ownershipMap.get(p.id) ?? 0;
-                const isDifferential = totalTeams > 1 && ownership < 20;
+                const isDifferential = totalTeams > 1 && ownership > 0 && ownership < 20;
 
                 return (
                   <tr
