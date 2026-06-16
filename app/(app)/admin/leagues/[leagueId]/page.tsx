@@ -9,6 +9,7 @@ import { ArchiveLeagueButton } from "./archive-league-button";
 import { PushGameButton } from "./push-game-button";
 import { SetPlayerPriceForm } from "./set-player-price-form";
 import { SetPlayerStatusForm } from "./set-player-status-form";
+import { GenerateAwardsButton } from "./generate-awards-button";
 import { updateLeagueStatusAction } from "./actions";
 
 type GameRow = {
@@ -313,6 +314,18 @@ export default async function LeagueAdminPage({
               </table>
             </div>
           )}
+        </div>
+
+        {/* Awards */}
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 flex items-center justify-between gap-4 flex-wrap">
+          <div>
+            <h2 className="font-semibold text-slate-800">Season Awards</h2>
+            <p className="text-xs text-slate-400 mt-0.5">
+              Awards are auto-generated when you archive the season. You can also generate them at any time for a mid-season preview.
+              Awards are preserved after archiving.
+            </p>
+          </div>
+          <GenerateAwardsButton leagueId={leagueId} />
         </div>
 
         {/* Player overrides */}

@@ -18,9 +18,12 @@ export function LeagueNav({ leagueId, leagueName, displayName, role }: Props) {
 
   const links = [
     { href: `${base}/dashboard`, label: "Home" },
-    { href: `${base}/my-team`, label: "My Team" },
+    { href: `${base}/my-team`, label: "Squad" },
     { href: `${base}/players`, label: "Players" },
-    { href: `${base}/standings`, label: "Standings" },
+    { href: `${base}/market`, label: "Market" },
+    { href: `${base}/transfers`, label: "Transfers" },
+    { href: `${base}/standings`, label: "Table" },
+    { href: `${base}/awards`, label: "Awards" },
   ];
 
   return (
@@ -41,13 +44,13 @@ export function LeagueNav({ leagueId, leagueName, displayName, role }: Props) {
           </Link>
 
           {/* Nav links */}
-          <nav className="flex items-center gap-1">
+          <nav className="flex items-center gap-0.5 overflow-x-auto scrollbar-hide">
             {links.map((l) => (
               <Link
                 key={l.href}
                 href={l.href}
                 className={clsx(
-                  "px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+                  "px-2.5 py-1.5 rounded-lg text-sm font-medium transition-colors whitespace-nowrap",
                   pathname.startsWith(l.href)
                     ? "bg-white/15 text-white"
                     : "text-slate-300 hover:text-white hover:bg-white/10"
@@ -60,7 +63,7 @@ export function LeagueNav({ leagueId, leagueName, displayName, role }: Props) {
               <Link
                 href={`/admin/leagues/${leagueId}`}
                 className={clsx(
-                  "px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+                  "px-2.5 py-1.5 rounded-lg text-sm font-medium transition-colors whitespace-nowrap",
                   pathname.startsWith(`/admin/leagues/${leagueId}`)
                     ? "bg-ndsc-gold/20 text-ndsc-gold"
                     : "text-ndsc-gold/70 hover:text-ndsc-gold hover:bg-ndsc-gold/10"

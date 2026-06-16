@@ -7,6 +7,7 @@ import { getMainDb } from "@/app/lib/main-db";
 import { redirect } from "next/navigation";
 import { calculateAllPrices, calculateEOSPrices, applyPrices } from "@/app/lib/pricing";
 import { processGame, updateFantasyTeamPoints } from "@/app/lib/scoring";
+import { generateAwards } from "@/app/lib/awards";
 
 async function assertAdmin(memberUserId: string) {
   const pool = getMainDb();
@@ -195,6 +196,13 @@ export async function archiveAndCloseLeagueAction(
     })),
   };
 
+  // Generate awards before data is deleted (awards persist after archive)
+  try {
+    await generateAwards(leagueId);
+  } catch {
+    // Non-fatal — awards can be regenerated manually
+  }
+
   await db.fantasyAuditLog.create({
     data: {
       adminUserId: session.memberUserId,
@@ -235,4 +243,22 @@ export async function archiveAndCloseLeagueAction(
       transfers: transfersDeleted.count,
     },
   };
+}
+
+export async function generateAwardsAction(
+  leagueId: string
+): Promise<{ error?: string; count?: number }> {
+  const session = await requireSession();
+  await assertAdmin(session.memberUserId);
+
+  try {
+    await generateAwards(leagueId);
+    const count = await db.fantasyAward.count({ where: { leagueId } });
+    await auditLog(session.memberUserId, leagueId, "generate_awards", "league", leagueId, `${count} awards generated`);
+    revalidatePath(`/admin/leagues/${leagueId}`);
+    revalidatePath(`/league/${leagueId}/awards`);
+    return { count };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Failed to generate awards" };
+  }
 }
