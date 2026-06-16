@@ -7,13 +7,10 @@ type PlayerStatRow = {
   gender: string | null;
   squad_status: string | null;
   games_played: number;
-  singles: number;
-  doubles: number;
-  triples: number;
-  home_runs: number;
-  rbis: number;
-  runs: number;
-  walks: number;
+  ops: number;
+  obp: number;
+  avg: number;
+  walk_rate: number;
   unassisted_outs: number;
   assisted_outs: number;
 };
@@ -53,51 +50,48 @@ export type PricingResult = {
   };
 };
 
-// Aggregate per-game stats from player_game_stats joined to games.
-// Uses the same raw columns as the scoring engine so data is always present.
-async function fetchSeasonStats(seasonId: string): Promise<PlayerStatRow[]> {
-  const pool = getMainDb();
-  const res = await pool.query<PlayerStatRow>(`
-    SELECT
-      pgs.player_id::text,
-      p.display_name,
-      p.gender,
-      pts.squad_status,
-      COUNT(DISTINCT pgs.game_id)::int                    AS games_played,
-      COALESCE(SUM(pgs.singles),          0)::float       AS singles,
-      COALESCE(SUM(pgs.doubles),          0)::float       AS doubles,
-      COALESCE(SUM(pgs.triples),          0)::float       AS triples,
-      COALESCE(SUM(pgs.home_runs),        0)::float       AS home_runs,
-      COALESCE(SUM(pgs.rbis),             0)::float       AS rbis,
-      COALESCE(SUM(pgs.runs),             0)::float       AS runs,
-      COALESCE(SUM(pgs.walks),            0)::float       AS walks,
-      COALESCE(SUM(pgs.unassisted_outs),  0)::float       AS unassisted_outs,
-      COALESCE(SUM(pgs.assisted_outs),    0)::float       AS assisted_outs
-    FROM player_game_stats pgs
-    JOIN games g ON g.id = pgs.game_id
-    JOIN players p ON p.id = pgs.player_id
-    LEFT JOIN player_team_seasons pts
-      ON pts.player_id = pgs.player_id
-      AND pts.season_id = g.season_id
-    WHERE g.season_id = $1
-      AND p.active = true
-    GROUP BY pgs.player_id, p.display_name, p.gender, pts.squad_status
-  `, [seasonId]);
-  return res.rows;
-}
-
+// Reads end-of-season aggregate stats from player_season_stats.
+// Column names: ops, obp, avg (pre-computed), uaos/aos (outs), walks.
 async function computePricing(
   seasonId: string,
   regressToMean: boolean
 ): Promise<PricingResult[]> {
   const pool = getMainDb();
-  const players = await fetchSeasonStats(seasonId);
+
+  const statsRes = await pool.query<PlayerStatRow>(`
+    SELECT
+      pss.player_id::text,
+      p.display_name,
+      p.gender,
+      pts.squad_status,
+      COALESCE(pss.games_played, 0)                                       AS games_played,
+      COALESCE(pss.ops,  0)::float                                         AS ops,
+      COALESCE(pss.obp,  0)::float                                         AS obp,
+      COALESCE(pss.avg,  0)::float                                         AS avg,
+      COALESCE(pss.walks::float / NULLIF(pss.games_played, 0), 0)::float  AS walk_rate,
+      COALESCE(pss.uaos, 0)::int                                           AS unassisted_outs,
+      COALESCE(pss.aos,  0)::int                                           AS assisted_outs
+    FROM player_season_stats_archive pss
+    JOIN players p ON p.id = pss.player_id
+    LEFT JOIN player_team_seasons pts
+      ON pts.player_id = pss.player_id
+      AND pts.season_id = pss.season_id
+    WHERE pss.season_id = $1
+      AND p.active = true
+  `, [seasonId]);
+
+  const players = statsRes.rows;
   if (players.length === 0) return [];
 
-  const awardsRes = await pool.query<AwardRow>(
-    "SELECT player_id::text, award, season_id::text FROM awards"
-  );
-  const awards = awardsRes.rows;
+  let awards: AwardRow[] = [];
+  try {
+    const awardsRes = await pool.query<AwardRow>(
+      "SELECT player_id::text, award, season_id::text FROM awards"
+    );
+    awards = awardsRes.rows;
+  } catch {
+    // awards table may not exist; bonuses simply won't apply
+  }
 
   const goldenGloveIds = new Set(
     awards
@@ -112,28 +106,18 @@ async function computePricing(
 
   const maxGames = Math.max(...players.map((p) => p.games_played), 1);
 
-  // Per-game hitting rate: mirrors fantasy scoring weights
-  const hittingRaws = players.map((p) => {
-    const g = p.games_played || 1;
-    return (
-      p.singles * 1 +
-      p.doubles * 2 +
-      p.triples * 3 +
-      p.home_runs * 5 +
-      p.rbis     * 1 +
-      p.runs     * 1 +
-      p.walks    * 1
-    ) / g;
-  });
+  // Hitting: blend of OPS, OBP, AVG (pre-computed in archive) + walk rate
+  const hittingRaws = players.map(
+    (p) => p.ops * 0.4 + p.obp * 0.3 + p.avg * 0.2 + p.walk_rate * 0.1
+  );
   const minHitting = Math.min(...hittingRaws);
   const maxHitting = Math.max(...hittingRaws);
 
-  // Per-game defence rate
+  // Defence: season outs total + golden glove bonus
   const defenceRaws = players.map((p) => {
-    const g = p.games_played || 1;
-    const outsPerGame = (p.unassisted_outs + p.assisted_outs) / g;
-    const ggBonus = goldenGloveIds.has(p.player_id) ? 10 : 0;
-    return outsPerGame + ggBonus;
+    const outs = p.unassisted_outs + p.assisted_outs;
+    const ggBonus = goldenGloveIds.has(p.player_id) ? 50 : 0;
+    return outs + ggBonus;
   });
   const minDefence = Math.min(...defenceRaws);
   const maxDefence = Math.max(...defenceRaws);
@@ -164,13 +148,11 @@ async function computePricing(
       fr = Math.round(fr + (MEAN_FR - fr) * 0.25);
     }
 
-    const price = priceFromRating(fr);
-
     return {
       playerId: p.player_id,
       displayName: p.display_name,
       fantasyRating: fr,
-      price,
+      price: priceFromRating(fr),
       breakdown: {
         hitting:      Math.round(hittingScore),
         defence:      Math.round(defenceScore),
@@ -182,7 +164,8 @@ async function computePricing(
   });
 }
 
-// Return all players registered in a season from player_season_stats (name + id only).
+// Active-season player list for filling gaps with FR-40 default.
+// Uses player_season_stats (live table) for the current season's roster.
 async function fetchSeasonPlayerList(
   seasonId: string
 ): Promise<{ player_id: string; display_name: string }[]> {
@@ -198,7 +181,33 @@ async function fetchSeasonPlayerList(
   return res.rows;
 }
 
-/** In-season pricing: reads the active season's live game stats. */
+/** Add FR-40 entries for any active player not yet in results. */
+async function fillMissingPlayers(
+  results: PricingResult[],
+  activeSeasonId: string
+): Promise<void> {
+  let allPlayers: { player_id: string; display_name: string }[] = [];
+  try {
+    allPlayers = await fetchSeasonPlayerList(activeSeasonId);
+  } catch {
+    // If live-season table has no data yet, skip gap-fill
+    return;
+  }
+  const pricedIds = new Set(results.map((r) => r.playerId));
+  for (const row of allPlayers) {
+    if (!pricedIds.has(row.player_id)) {
+      results.push({
+        playerId: row.player_id,
+        displayName: row.display_name,
+        fantasyRating: 40,
+        price: priceFromRating(40),
+        breakdown: { hitting: 0, defence: 0, availability: 0, experience: 0, bonuses: 0 },
+      });
+    }
+  }
+}
+
+/** In-season pricing: reads the active season's stats from the archive. */
 export async function calculateAllPrices(): Promise<PricingResult[]> {
   const pool = getMainDb();
   const seasonRes = await pool.query<{ id: string }>(
@@ -213,59 +222,23 @@ export async function calculateAllPrices(): Promise<PricingResult[]> {
 }
 
 /**
- * Season-open pricing: reads the previous season's final game stats and applies
- * 25% regression to mean so last season's stars don't start untouchably priced.
- *
- * If the previous season has no game data (e.g. first year running the fantasy
- * league), falls back to the current season's game data instead so players still
- * get differentiated prices based on early-season performance.
- *
- * Players with no game data in either season default to FR 40.
+ * EOS pricing: reads last season's archived stats (player_season_stats)
+ * and applies 25% regression to mean. Players active this season but
+ * absent from last season's archive default to FR 40.
  */
 export async function calculateEOSPrices(prevSeasonId: string): Promise<PricingResult[]> {
   const pool = getMainDb();
+  const results = await computePricing(prevSeasonId, true);
+
   const activeSeasonRes = await pool.query<{ id: string }>(
     "SELECT id FROM seasons WHERE is_active = true LIMIT 1"
   );
   const activeSeasonId = activeSeasonRes.rows[0]?.id;
-
-  // Try previous season first
-  let results = await computePricing(prevSeasonId, true);
-
-  // No prevSeason game data — first year running the league, or stats not tracked.
-  // Fall back to current season game data (still apply regression so prices
-  // aren't locked to early-season performance).
-  if (results.length === 0 && activeSeasonId) {
-    results = await computePricing(activeSeasonId, true);
-  }
-
-  // Ensure every player in the active season is priced, even if they haven't
-  // appeared in any game stats yet.
   if (activeSeasonId) {
     await fillMissingPlayers(results, activeSeasonId);
   }
 
   return results;
-}
-
-/** Add FR-40 entries for any registered player not already in results. */
-async function fillMissingPlayers(
-  results: PricingResult[],
-  seasonId: string
-): Promise<void> {
-  const allPlayers = await fetchSeasonPlayerList(seasonId);
-  const pricedIds = new Set(results.map((r) => r.playerId));
-  for (const row of allPlayers) {
-    if (!pricedIds.has(row.player_id)) {
-      results.push({
-        playerId: row.player_id,
-        displayName: row.display_name,
-        fantasyRating: 40,
-        price: priceFromRating(40),
-        breakdown: { hitting: 0, defence: 0, availability: 0, experience: 0, bonuses: 0 },
-      });
-    }
-  }
 }
 
 export async function applyPrices(

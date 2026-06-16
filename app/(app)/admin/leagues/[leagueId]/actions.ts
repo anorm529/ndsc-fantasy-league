@@ -49,19 +49,24 @@ export async function generatePricesAction(
   const session = await requireSession();
   await assertAdmin(session.memberUserId);
 
-  const league = await db.fantasyLeague.findUnique({ where: { id: leagueId } });
-  if (!league) return { error: "League not found" };
+  try {
+    const league = await db.fantasyLeague.findUnique({ where: { id: leagueId } });
+    if (!league) return { error: "League not found" };
 
-  const results = league.prevSeasonId
-    ? await calculateEOSPrices(league.prevSeasonId)
-    : await calculateAllPrices();
+    const results = league.prevSeasonId
+      ? await calculateEOSPrices(league.prevSeasonId)
+      : await calculateAllPrices();
 
-  await applyPrices(results, session.memberUserId, leagueId);
+    await applyPrices(results, session.memberUserId, leagueId);
 
-  revalidatePath(`/admin/leagues/${leagueId}`);
-  revalidatePath(`/league/${leagueId}/players`);
+    revalidatePath(`/admin/leagues/${leagueId}`);
+    revalidatePath(`/league/${leagueId}/players`);
 
-  return { count: results.length };
+    return { count: results.length };
+  } catch (e) {
+    console.error("[generatePricesAction]", e);
+    return { error: e instanceof Error ? e.message : "Failed to generate prices" };
+  }
 }
 
 export async function pushGameAction(
